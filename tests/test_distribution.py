@@ -163,8 +163,10 @@ def create_public_repository(base: Path) -> tuple[Path, Path]:
             "chromeWebStore": {
                 "itemId": contract.STORE_ITEM_ID,
                 "publishedVersion": contract.PUBLISHED_STORE_VERSION,
-                "submittedVersion": None,
-                "status": "not_submitted",
+                "submittedVersion": contract.SUBMITTED_STORE_VERSION,
+                "status": contract.STORE_REVIEW_STATUS,
+                "submittedAt": contract.STORE_SUBMITTED_AT,
+                "autoPublishAfterApproval": contract.STORE_AUTO_PUBLISH_AFTER_APPROVAL,
             },
             "syncAudit": {
                 "scope": "non-payment extension commands to shipped Skill scripts",
@@ -521,6 +523,21 @@ class PublicDistributionTest(unittest.TestCase):
                 "release verification status must be ready",
                 verify_distribution.validate(root, check_checksums=True),
             )
+
+    def test_store_submission_state_accepts_pending_v053_auto_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, _validated = create_public_repository(Path(temp))
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            release["chromeWebStore"] = {
+                "itemId": contract.STORE_ITEM_ID,
+                "publishedVersion": "0.5.2",
+                "submittedVersion": "0.5.3",
+                "status": "pending_review",
+                "submittedAt": "2026-07-20",
+                "autoPublishAfterApproval": True,
+            }
+
+            self.assertEqual(verify_distribution.verify_identity_and_links(root, release), [])
 
     def test_claim_scan_accepts_disclaimers_and_checks_extension_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

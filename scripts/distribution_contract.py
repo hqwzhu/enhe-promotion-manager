@@ -12,6 +12,10 @@ from pathlib import Path
 
 VERSION = "0.5.3"
 PUBLISHED_STORE_VERSION = "0.5.2"
+SUBMITTED_STORE_VERSION = VERSION
+STORE_REVIEW_STATUS = "pending_review"
+STORE_SUBMITTED_AT = "2026-07-20"
+STORE_AUTO_PUBLISH_AFTER_APPROVAL = True
 STORE_ITEM_ID = "dloklkbnmoigemnfigbkibogmgbieppl"
 PUBLIC_REPOSITORY = "hqwzhu/enhe-promotion-manager"
 PRODUCT_EN = "ENHE Product Promo Maker"

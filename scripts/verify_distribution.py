@@ -167,7 +167,12 @@ def verify_identity_and_links(root: Path, release: dict) -> list[str]:
         errors.append("Chrome Web Store item ID is incorrect")
     if store.get("publishedVersion") != contract.PUBLISHED_STORE_VERSION:
         errors.append("Chrome Web Store published version is incorrect")
-    if store.get("submittedVersion") is not None or store.get("status") != "not_submitted":
+    if (
+        store.get("submittedVersion") != contract.SUBMITTED_STORE_VERSION
+        or store.get("status") != contract.STORE_REVIEW_STATUS
+        or store.get("submittedAt") != contract.STORE_SUBMITTED_AT
+        or store.get("autoPublishAfterApproval") is not contract.STORE_AUTO_PUBLISH_AFTER_APPROVAL
+    ):
         errors.append("Chrome Web Store submission state is incorrect")
     if release.get("skillArchive") != EXPECTED_SKILL_ARCHIVE:
         errors.append("release Skill archive name is incorrect")
