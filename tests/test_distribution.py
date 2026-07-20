@@ -199,6 +199,11 @@ def create_public_repository(base: Path) -> tuple[Path, Path]:
 
 
 class PublicDistributionTest(unittest.TestCase):
+    def test_repository_preserves_release_manifest_checksum_bytes(self) -> None:
+        attributes = ROOT / ".gitattributes"
+        self.assertTrue(attributes.is_file(), ".gitattributes must define checkout EOLs")
+        self.assertIn("release-manifest.json -text", attributes.read_text(encoding="utf-8").splitlines())
+
     def test_release_rolls_back_existing_publication_after_prevalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
@@ -378,6 +383,55 @@ class PublicDistributionTest(unittest.TestCase):
                     (root / "skill/viral-product-copy-video-generator/scripts" / name).is_file()
                 )
 
+    def test_archive_validation_accepts_text_line_ending_differences(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, validated = create_public_repository(Path(temp))
+            with mock.patch.object(build_release, "ROOT", root):
+                build_release.build_release(validated)
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            popup = root / "extension/chrome/popup.html"
+            original = popup.read_bytes()
+            changed = (
+                original.replace(b"\r\n", b"\n")
+                if b"\r\n" in original
+                else original.replace(b"\n", b"\r\n")
+            )
+            self.assertNotEqual(changed, original)
+            popup.write_bytes(changed)
+
+            self.assertEqual(verify_distribution.verify_archives(root, release), [])
+
+    def test_archive_validation_rejects_non_eol_text_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, validated = create_public_repository(Path(temp))
+            with mock.patch.object(build_release, "ROOT", root):
+                build_release.build_release(validated)
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            popup = root / "extension/chrome/popup.html"
+            popup.write_bytes(popup.read_bytes() + b"content mutation")
+
+            self.assertIn(
+                "extension ZIP bytes differ from source: popup.html",
+                verify_distribution.verify_archives(root, release),
+            )
+
+    def test_archive_validation_rejects_binary_line_ending_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, validated = create_public_repository(Path(temp))
+            binary = root / "extension/chrome/payload.bin"
+            binary.write_bytes(b"BINARY-HEADER\r\npayload")
+            with zipfile.ZipFile(validated, "a") as archive:
+                archive.writestr("payload.bin", binary.read_bytes())
+            with mock.patch.object(build_release, "ROOT", root):
+                build_release.build_release(validated)
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            binary.write_bytes(b"BINARY-HEADER\npayload")
+
+            self.assertIn(
+                "extension ZIP bytes differ from source: payload.bin",
+                verify_distribution.verify_archives(root, release),
+            )
+
     def test_release_rejects_duplicate_and_traversal_extension_members(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
@@ -459,6 +513,36 @@ class PublicDistributionTest(unittest.TestCase):
             self.assertNotEqual(
                 verify_distribution.canonical_tree_digest(root_a, {}),
                 verify_distribution.canonical_tree_digest(root_b, {}),
+            )
+
+    def test_canonical_digest_normalizes_text_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root_lf = base / "tree-lf"
+            root_crlf = base / "tree-crlf"
+            root_lf.mkdir()
+            root_crlf.mkdir()
+            (root_lf / "text.txt").write_bytes(b"first\nsecond\n")
+            (root_crlf / "text.txt").write_bytes(b"first\r\nsecond\r\n")
+
+            self.assertEqual(
+                verify_distribution.canonical_tree_digest(root_lf, {}),
+                verify_distribution.canonical_tree_digest(root_crlf, {}),
+            )
+
+    def test_canonical_digest_preserves_binary_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root_lf = base / "tree-lf"
+            root_crlf = base / "tree-crlf"
+            root_lf.mkdir()
+            root_crlf.mkdir()
+            (root_lf / "payload.bin").write_bytes(b"BINARY-HEADER\npayload")
+            (root_crlf / "payload.bin").write_bytes(b"BINARY-HEADER\r\npayload")
+
+            self.assertNotEqual(
+                verify_distribution.canonical_tree_digest(root_lf, {}),
+                verify_distribution.canonical_tree_digest(root_crlf, {}),
             )
 
     def test_checksums_are_sorted_uppercase_and_missing_inputs_fail(self) -> None:

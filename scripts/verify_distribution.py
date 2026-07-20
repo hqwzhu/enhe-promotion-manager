@@ -75,6 +75,8 @@ _ENGLISH_NEGATION = re.compile(
 )
 _CHINESE_NEGATION = re.compile(r"(?:不|不会|不能|未|不支持|不允许|不提供)\s*$")
 _TEXT_SUFFIXES = {".html", ".js", ".json", ".md", ".txt"}
+_EOL_TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".jsonl", ".md", ".py", ".txt"}
+_EOL_TEXT_FILENAMES = {".gitattributes", ".gitignore", "LICENSE", "SHA256SUMS"}
 _GENERATED_COMPONENT_PARTS = {"dist", "__pycache__", ".pytest_cache", "tmp-release-download"}
 VERSION = contract.VERSION
 EXPECTED_CHECKSUM_PATHS = (
@@ -322,6 +324,19 @@ def _safe_zip_members(archive: zipfile.ZipFile) -> list[str]:
     return names
 
 
+def _normalized_text_bytes(name: str, data: bytes) -> bytes:
+    path = Path(name)
+    if path.suffix.lower() not in _EOL_TEXT_SUFFIXES and path.name not in _EOL_TEXT_FILENAMES:
+        return data
+    if b"\0" in data:
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    return data.replace(b"\r\n", b"\n")
+
+
 def verify_archives(root: Path, release: dict) -> list[str]:
     errors: list[str] = []
     if release.get("skillArchive") != EXPECTED_SKILL_ARCHIVE:
@@ -351,7 +366,9 @@ def verify_archives(root: Path, release: dict) -> list[str]:
                 errors.append("Skill ZIP member list differs from Skill source")
             else:
                 for name, source in expected_skill.items():
-                    if archive.read(name) != source.read_bytes():
+                    if _normalized_text_bytes(name, archive.read(name)) != _normalized_text_bytes(
+                        name, source.read_bytes()
+                    ):
                         errors.append(f"Skill ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid Skill ZIP: {exc}")
@@ -372,7 +389,9 @@ def verify_archives(root: Path, release: dict) -> list[str]:
                 errors.append("extension ZIP member list differs from extension/chrome source")
             else:
                 for name, source in expected_extension.items():
-                    if archive.read(name) != source.read_bytes():
+                    if _normalized_text_bytes(name, archive.read(name)) != _normalized_text_bytes(
+                        name, source.read_bytes()
+                    ):
                         errors.append(f"extension ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid extension ZIP: {exc}")
@@ -438,6 +457,7 @@ def canonical_tree_digest(root: Path, release: dict) -> str:
         name = relative_name.encode("utf-8")
         digest.update(len(name).to_bytes(8, "big"))
         digest.update(name)
+        data = _normalized_text_bytes(relative_name, data)
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
     return digest.hexdigest()
