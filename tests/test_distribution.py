@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -163,8 +164,10 @@ def create_public_repository(base: Path) -> tuple[Path, Path]:
             "chromeWebStore": {
                 "itemId": contract.STORE_ITEM_ID,
                 "publishedVersion": contract.PUBLISHED_STORE_VERSION,
-                "submittedVersion": None,
-                "status": "not_submitted",
+                "submittedVersion": contract.SUBMITTED_STORE_VERSION,
+                "status": contract.STORE_REVIEW_STATUS,
+                "submittedAt": contract.STORE_SUBMITTED_AT,
+                "autoPublishAfterApproval": contract.STORE_AUTO_PUBLISH_AFTER_APPROVAL,
             },
             "syncAudit": {
                 "scope": "non-payment extension commands to shipped Skill scripts",
@@ -428,6 +431,11 @@ class PublicDistributionTest(unittest.TestCase):
                     )
                     path.write_bytes(original)
 
+            runtime_cache = root / "scripts/__pycache__/verify_distribution.cpython-314.pyc"
+            runtime_cache.parent.mkdir(parents=True)
+            runtime_cache.write_bytes(b"runtime cache")
+            self.assertEqual(verify_distribution.canonical_tree_digest(root, release), before)
+
             nested_dist = root / "skill/viral-product-copy-video-generator/dist/evil.py"
             nested_dist.parent.mkdir()
             nested_dist.write_text("print('not shipped')\n", encoding="utf-8")
@@ -436,6 +444,22 @@ class PublicDistributionTest(unittest.TestCase):
             with mock.patch.object(build_release, "ROOT", root):
                 with self.assertRaisesRegex(RuntimeError, "generated|unsafe"):
                     build_release.build_release(validated)
+
+    def test_canonical_digest_frames_each_file_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root_a = base / "tree-a"
+            root_b = base / "tree-b"
+            root_a.mkdir()
+            root_b.mkdir()
+            (root_a / "a").write_bytes(b"xb\0y")
+            (root_b / "a").write_bytes(b"x")
+            (root_b / "b").write_bytes(b"y")
+
+            self.assertNotEqual(
+                verify_distribution.canonical_tree_digest(root_a, {}),
+                verify_distribution.canonical_tree_digest(root_b, {}),
+            )
 
     def test_checksums_are_sorted_uppercase_and_missing_inputs_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -516,6 +540,49 @@ class PublicDistributionTest(unittest.TestCase):
                 "release verification status must be ready",
                 verify_distribution.validate(root, check_checksums=True),
             )
+
+    def test_store_submission_state_accepts_pending_v053_auto_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, _validated = create_public_repository(Path(temp))
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            release["chromeWebStore"] = {
+                "itemId": contract.STORE_ITEM_ID,
+                "publishedVersion": "0.5.2",
+                "submittedVersion": "0.5.3",
+                "status": "pending_review",
+                "submittedAt": "2026-07-20",
+                "autoPublishAfterApproval": True,
+            }
+
+            self.assertEqual(verify_distribution.verify_identity_and_links(root, release), [])
+
+    def test_store_submission_state_rejects_malformed_fields(self) -> None:
+        invalid_values = {
+            "submittedVersion": None,
+            "status": "not_submitted",
+            "submittedAt": None,
+            "autoPublishAfterApproval": "true",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root, _validated = create_public_repository(Path(temp))
+            original = verify_distribution.read_json(root / "release-manifest.json")
+            for field, invalid in invalid_values.items():
+                with self.subTest(field=field, invalid=invalid):
+                    release = copy.deepcopy(original)
+                    release["chromeWebStore"][field] = invalid
+                    self.assertIn(
+                        "Chrome Web Store submission state is incorrect",
+                        verify_distribution.verify_identity_and_links(root, release),
+                    )
+
+            for invalid in (False, 1):
+                with self.subTest(field="autoPublishAfterApproval", invalid=invalid):
+                    release = copy.deepcopy(original)
+                    release["chromeWebStore"]["autoPublishAfterApproval"] = invalid
+                    self.assertIn(
+                        "Chrome Web Store submission state is incorrect",
+                        verify_distribution.verify_identity_and_links(root, release),
+                    )
 
     def test_claim_scan_accepts_disclaimers_and_checks_extension_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
