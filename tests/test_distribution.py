@@ -428,6 +428,11 @@ class PublicDistributionTest(unittest.TestCase):
                     )
                     path.write_bytes(original)
 
+            runtime_cache = root / "scripts/__pycache__/verify_distribution.cpython-314.pyc"
+            runtime_cache.parent.mkdir(parents=True)
+            runtime_cache.write_bytes(b"runtime cache")
+            self.assertEqual(verify_distribution.canonical_tree_digest(root, release), before)
+
             nested_dist = root / "skill/viral-product-copy-video-generator/dist/evil.py"
             nested_dist.parent.mkdir()
             nested_dist.write_text("print('not shipped')\n", encoding="utf-8")

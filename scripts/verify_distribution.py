@@ -409,7 +409,12 @@ def canonical_tree_digest(root: Path, release: dict) -> str:
     ):
         relative = path.relative_to(root)
         relative_name = relative.as_posix()
-        if relative.parts and relative.parts[0] in {".git", "dist"}:
+        if relative.parts and relative.parts[0].lower() in {".git", "dist", "tmp-release-download"}:
+            continue
+        if (
+            any(part.lower() in {"__pycache__", ".pytest_cache"} for part in relative.parts)
+            or path.suffix.lower() == ".pyc"
+        ):
             continue
         if relative_name == "SHA256SUMS":
             continue
