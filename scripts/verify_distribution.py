@@ -322,6 +322,16 @@ def _safe_zip_members(archive: zipfile.ZipFile) -> list[str]:
     return names
 
 
+def _normalized_text_bytes(data: bytes) -> bytes:
+    if b"\0" in data:
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    return data.replace(b"\r\n", b"\n")
+
+
 def verify_archives(root: Path, release: dict) -> list[str]:
     errors: list[str] = []
     if release.get("skillArchive") != EXPECTED_SKILL_ARCHIVE:
@@ -351,7 +361,9 @@ def verify_archives(root: Path, release: dict) -> list[str]:
                 errors.append("Skill ZIP member list differs from Skill source")
             else:
                 for name, source in expected_skill.items():
-                    if archive.read(name) != source.read_bytes():
+                    if _normalized_text_bytes(archive.read(name)) != _normalized_text_bytes(
+                        source.read_bytes()
+                    ):
                         errors.append(f"Skill ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid Skill ZIP: {exc}")
@@ -372,7 +384,9 @@ def verify_archives(root: Path, release: dict) -> list[str]:
                 errors.append("extension ZIP member list differs from extension/chrome source")
             else:
                 for name, source in expected_extension.items():
-                    if archive.read(name) != source.read_bytes():
+                    if _normalized_text_bytes(archive.read(name)) != _normalized_text_bytes(
+                        source.read_bytes()
+                    ):
                         errors.append(f"extension ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid extension ZIP: {exc}")
@@ -438,6 +452,7 @@ def canonical_tree_digest(root: Path, release: dict) -> str:
         name = relative_name.encode("utf-8")
         digest.update(len(name).to_bytes(8, "big"))
         digest.update(name)
+        data = _normalized_text_bytes(data)
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
     return digest.hexdigest()
