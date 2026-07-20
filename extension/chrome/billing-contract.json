@@ -1,0 +1,154 @@
+{
+  "name": "ENHE Product Promo Maker Billing Contract",
+  "version": "0.6.1",
+  "provider": "zpay_domestic_or_stripe_international",
+  "website": "https://www.enhe-tech.com.cn/",
+  "checkoutUrl": "https://www.enhe-tech.com.cn/promotion-manager/checkout",
+  "customerPortalUrl": "https://www.enhe-tech.com.cn/promotion-manager/billing",
+  "licenseEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/license",
+  "usageAuthorizeEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/usage/authorize",
+  "usageCommitEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/usage/commit",
+  "hostedRunEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/run",
+  "hostedRunStatusEndpointTemplate": "https://www.enhe-tech.com.cn/api/promotion-manager/run/{runId}",
+  "webhookEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/webhooks/stripe",
+  "domesticWebhookEndpoint": "https://www.enhe-tech.com.cn/api/promotion-manager/webhooks/zpay",
+  "legalUrls": {
+    "privacyPolicy": "https://www.enhe-tech.com.cn/promotion-manager/privacy",
+    "termsOfService": "https://www.enhe-tech.com.cn/promotion-manager/terms",
+    "refundPolicy": "https://www.enhe-tech.com.cn/promotion-manager/refund",
+    "support": "https://www.enhe-tech.com.cn/promotion-manager/support"
+  },
+  "plans": {
+    "free": {
+      "monthlyPriceUsd": 0,
+      "includedCredits": 5,
+      "overage": "disabled",
+      "hostedRuns": false,
+      "scheduledRuns": false
+    },
+    "starter": {
+      "monthlyPriceUsd": 29,
+      "includedCredits": 60,
+      "overage": "disabled_by_default",
+      "hostedRuns": true,
+      "scheduledRuns": false
+    },
+    "growth": {
+      "monthlyPriceUsd": 99,
+      "includedCredits": 220,
+      "overage": "optional_prepaid",
+      "hostedRuns": true,
+      "scheduledRuns": true
+    },
+    "scale": {
+      "monthlyPriceUsd": 299,
+      "includedCredits": 800,
+      "overage": "prepaid_or_contract_only",
+      "hostedRuns": true,
+      "scheduledRuns": true
+    }
+  },
+  "creditCosts": {
+    "command_only": 0,
+    "standard_run": 4,
+    "research_run": 3,
+    "deep_strategy_review": 15,
+    "hosted_mp4_render": 3,
+    "browser_publish_session": 2,
+    "launch_unlock_pack": 2,
+    "viral_evidence_inbox_setup": 1,
+    "viral_evidence_inbox": 2,
+    "real_evidence_inbox_setup": 1,
+    "real_evidence_inbox": 2,
+    "performance_monitor": 2,
+    "final_readiness_audit": 1,
+    "automation_config_init": 1,
+    "automation_due_run": 4,
+    "automation_windows_task": 1
+  },
+  "licenseRequest": {
+    "method": "POST",
+    "body": {
+      "licenseKey": "string",
+      "requestedPlan": "free|starter|growth|scale",
+      "extensionVersion": "string",
+      "website": "string",
+      "commandType": "skill_entry|browser_publish_session|launch_unlock_pack|viral_evidence_inbox_setup|viral_evidence_inbox|real_evidence_inbox_setup|real_evidence_inbox|performance_monitor|final_readiness|automation_init|automation_run|automation_windows_task",
+      "estimatedMonthlyCredits": "number"
+    }
+  },
+  "licenseResponse": {
+    "active": "boolean",
+    "plan": "Free|Starter|Growth|Scale",
+    "creditsRemaining": "number",
+    "renewsAt": "YYYY-MM-DD",
+    "checkoutUrl": "string",
+    "customerPortalUrl": "string",
+    "hostedRunEndpoint": "string"
+  },
+  "usageAuthorizeRequest": {
+    "method": "POST",
+    "body": {
+      "licenseKey": "string",
+      "workflowType": "command_only|standard_run|research_run|deep_strategy_review|hosted_mp4_render|browser_publish_session|launch_unlock_pack|viral_evidence_inbox_setup|viral_evidence_inbox|real_evidence_inbox_setup|real_evidence_inbox|performance_monitor|final_readiness_audit|automation_config_init|automation_due_run|automation_windows_task",
+      "estimatedCredits": "number",
+      "idempotencyKey": "string",
+      "commandType": "skill_entry|browser_publish_session|launch_unlock_pack|viral_evidence_inbox_setup|viral_evidence_inbox|real_evidence_inbox_setup|real_evidence_inbox|performance_monitor|final_readiness|automation_init|automation_run|automation_windows_task",
+      "extensionVersion": "string",
+      "website": "string"
+    }
+  },
+  "usageAuthorizeResponse": {
+    "allowed": "boolean",
+    "usageId": "string",
+    "creditsReserved": "number",
+    "creditsRemainingAfterReservation": "number",
+    "reason": "quota_exceeded|inactive_license|ok"
+  },
+  "hostedRunRequest": {
+    "method": "POST",
+    "body": {
+      "licenseKey": "string",
+      "usageId": "string",
+      "workflowType": "command_only|standard_run|research_run|deep_strategy_review|hosted_mp4_render|browser_publish_session|launch_unlock_pack|viral_evidence_inbox_setup|viral_evidence_inbox|real_evidence_inbox_setup|real_evidence_inbox|performance_monitor|final_readiness_audit|automation_config_init|automation_due_run|automation_windows_task",
+      "estimatedCredits": "number",
+      "commandType": "skill_entry|browser_publish_session|launch_unlock_pack|viral_evidence_inbox_setup|viral_evidence_inbox|real_evidence_inbox_setup|real_evidence_inbox|performance_monitor|final_readiness|automation_init|automation_run|automation_windows_task",
+      "extensionVersion": "string",
+      "website": "string",
+      "requestSource": "chrome_extension",
+      "idempotencyKey": "string",
+      "productUrl": "string",
+      "platforms": "string[]",
+      "workflowDepth": "full|research|playbook",
+      "localCommand": "string",
+      "options": "object",
+      "safety": "object"
+    }
+  },
+  "hostedRunResponse": {
+    "accepted": "boolean",
+    "runId": "string",
+    "status": "queued|running|succeeded|failed|blocked",
+    "dashboardUrl": "string",
+    "statusUrl": "string",
+    "reportUrl": "string",
+    "reason": "quota_required|inactive_license|missing_usage_reservation|ok"
+  },
+  "requiredWebhookEvents": [
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.payment_succeeded",
+    "invoice.payment_failed",
+    "entitlements.active_entitlement_summary.updated"
+  ],
+  "securityRules": [
+    "Do not store payment provider secret keys in the extension.",
+    "Verify webhook signatures on the backend.",
+    "Hash license keys at rest.",
+    "Use idempotency keys for usage reservations.",
+    "Never allow hosted model calls without a server-side quota check.",
+    "Reject hosted run requests unless usageId, workflowType, and reserved credits match the server-side usage ledger."
+  ]
+}

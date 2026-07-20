@@ -1,0 +1,57 @@
+{
+  "version": "0.5.3",
+  "sourceRepository": "https://github.com/hqwzhu/Viral-Product-Copy-Video-Generator",
+  "sourceCommit": "897547e1b8efd9ce0fd2655b2ff16da5d0235097",
+  "publicRepository": "https://github.com/hqwzhu/enhe-promotion-manager",
+  "treeDigest": "911078115b46689d6598329911b27f087e3ee02db2dd8a17910c64e5da0c032f",
+  "skillArchive": "enhe-product-promo-maker-skill-0.5.3.zip",
+  "extensionArchive": "enhe-promotion-manager-extension-0.5.3.zip",
+  "chromeWebStore": {
+    "itemId": "dloklkbnmoigemnfigbkibogmgbieppl",
+    "publishedVersion": "0.5.2",
+    "submittedVersion": null,
+    "status": "not_submitted"
+  },
+  "syncAudit": {
+    "scope": "non-payment extension commands to shipped Skill scripts",
+    "excluded": [
+      "payment",
+      "subscription",
+      "license purchase",
+      "credits",
+      "billing backend"
+    ],
+    "commands": [
+      "automation_scheduler.py",
+      "browser_publish_session.py",
+      "final_capability_readiness.py",
+      "launch_unlock_pack.py",
+      "performance_monitor.py",
+      "promotion_manager.py",
+      "real_evidence_inbox.py",
+      "real_evidence_inbox_setup.py",
+      "skill_entry.py",
+      "viral_evidence_inbox.py",
+      "viral_evidence_inbox_setup.py"
+    ],
+    "status": "ready"
+  },
+  "artifacts": {
+    "enhe-product-promo-maker-skill-0.5.3.zip": {
+      "bytes": 621969,
+      "sha256": "D131E8894AE73EBCA2B98CAF3CBF8B5EBDDA8B0AE33AB98CBBEBBCFB2F9FBDC1"
+    },
+    "enhe-promotion-manager-extension-0.5.3.zip": {
+      "bytes": 74183,
+      "sha256": "57FC9D39FDC06F0FCD1BFA4071E018FC348CC7FC64C66CD032DE7F0402DFC81F"
+    }
+  },
+  "verification": {
+    "status": "ready",
+    "commands": [
+      "python scripts/build_release.py --validated-extension-zip dist/validated/enhe-promotion-manager-0.5.3.zip",
+      "python scripts/verify_distribution.py",
+      "python -m unittest discover -s tests -v"
+    ]
+  }
+}

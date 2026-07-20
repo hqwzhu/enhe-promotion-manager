@@ -1,0 +1,5 @@
+# Optional official YouTube Data API publishing dependencies.
+# Install when using scripts/publish_executor.py --platform youtube or scripts/youtube_oauth_publish.py.
+google-api-python-client>=2.198.0,<3
+google-auth-httplib2>=0.4.0,<1
+google-auth-oauthlib>=1.4.0,<2

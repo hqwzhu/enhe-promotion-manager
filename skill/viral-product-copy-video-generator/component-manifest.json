@@ -1,0 +1,23 @@
+{
+  "name": "viral-product-copy-video-generator",
+  "version": "0.5.3",
+  "sourceCommit": "897547e1b8efd9ce0fd2655b2ff16da5d0235097",
+  "runtime": "Python 3.11 and Codex",
+  "entryPoints": [
+    "SKILL.md",
+    "scripts/skill_entry.py"
+  ],
+  "capabilityIds": [
+    "automation_scheduler.py",
+    "browser_publish_session.py",
+    "final_capability_readiness.py",
+    "launch_unlock_pack.py",
+    "performance_monitor.py",
+    "promotion_manager.py",
+    "real_evidence_inbox.py",
+    "real_evidence_inbox_setup.py",
+    "skill_entry.py",
+    "viral_evidence_inbox.py",
+    "viral_evidence_inbox_setup.py"
+  ]
+}

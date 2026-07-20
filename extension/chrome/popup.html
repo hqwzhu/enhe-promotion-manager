@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ENHE Product Promo Maker</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body data-layout="popup" data-view="main">
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ENHE AI</p>
+          <h1 data-i18n="appTitle">ENHE Product Promo Maker</h1>
+          <p class="product-promise" data-i18n="productPromise">Turn product pages into promotional copy, video scripts, and publishing assets.</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="language-switch" role="group" data-i18n-aria-label="languageSwitchLabel">
+            <button id="languageZh" type="button" class="language-option" aria-pressed="false">中文</button>
+            <button id="languageEn" type="button" class="language-option" aria-pressed="true">EN</button>
+          </div>
+          <button id="openGuide" type="button" class="icon-button" data-i18n="openGuide" data-i18n-aria-label="openGuideLabel" aria-controls="guideView">?</button>
+          <button id="openWorkspace" type="button" class="secondary" data-i18n="openWorkspace" data-i18n-aria-label="openWorkspaceLabel">Open full workspace</button>
+          <span class="status" id="licenseStatus">Local</span>
+        </div>
+      </header>
+
+      <div id="mainView">
+      <div class="workspace-grid">
+      <div class="workspace-primary">
+      <section class="panel">
+        <label class="field">
+          <span data-i18n="productUrlLabel">Product or website URL</span>
+          <input id="productUrl" type="url" placeholder="https://example.com/product">
+        </label>
+        <div class="button-row">
+          <button id="useTab" type="button" class="secondary" data-i18n="useCurrentTab">Use current tab</button>
+          <button id="generate" type="button" class="primary" data-i18n="generateCommand">Generate command</button>
+        </div>
+        <p id="tabTitle" class="hint" data-i18n="tabPrompt">Open a product page, then capture the current tab.</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2 data-i18n="platformsTitle">Platforms</h2>
+          <button id="selectAll" type="button" class="ghost" data-i18n="selectAll">All</button>
+        </div>
+        <div class="platform-grid" id="platforms">
+          <label><input type="checkbox" value="youtube" checked> <span data-i18n="platformYouTube">YouTube</span></label>
+          <label><input type="checkbox" value="zhihu" checked> <span data-i18n="platformZhihu">Zhihu</span></label>
+          <label><input type="checkbox" value="xiaohongshu" checked> <span data-i18n="platformXiaohongshu">Xiaohongshu</span></label>
+          <label><input type="checkbox" value="douyin" checked> <span data-i18n="platformDouyin">Douyin</span></label>
+          <label><input type="checkbox" value="github" checked> <span data-i18n="platformGitHub">GitHub</span></label>
+        </div>
+        <label class="field compact">
+          <span data-i18n="workflowDepthLabel">Workflow depth</span>
+          <select id="workflowDepth">
+            <option value="full" data-i18n="workflowFull">Full promotion loop</option>
+            <option value="research" data-i18n="workflowResearch">Research and copy</option>
+            <option value="playbook" data-i18n="workflowPlaybook">Playbook only</option>
+          </select>
+        </label>
+        <label class="field compact">
+          <span data-i18n="commandTypeLabel">Command type</span>
+          <select id="commandType">
+            <option value="skill_entry" selected data-i18n="commandSkillEntry">One-link Skill run</option>
+            <option value="browser_publish_session" data-i18n="commandPublishSession">Browser publish session</option>
+            <option value="launch_unlock_pack" data-i18n="commandLaunchUnlock">Launch unlock pack</option>
+            <option value="viral_evidence_inbox_setup" data-i18n="commandViralEvidenceSetup">Viral evidence setup</option>
+            <option value="viral_evidence_inbox" data-i18n="commandViralEvidenceInbox">Viral evidence inbox</option>
+            <option value="real_evidence_inbox_setup" data-i18n="commandEvidenceSetup">Evidence inbox setup</option>
+            <option value="real_evidence_inbox" data-i18n="commandEvidenceInbox">Real evidence inbox</option>
+            <option value="performance_monitor" data-i18n="commandPerformanceMonitor">Performance monitor</option>
+            <option value="platform_data_collect" data-i18n="commandPlatformData">Local platform evidence</option>
+            <option value="final_readiness" data-i18n="commandReadiness">Final readiness audit</option>
+            <option value="automation_init" data-i18n="commandScheduleInit">Schedule init</option>
+            <option value="automation_run" data-i18n="commandScheduledRun">Run scheduled jobs</option>
+            <option value="automation_windows_task" data-i18n="commandWindowsTask">Windows task script</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2 data-i18n="workflowPathsTitle">Workflow paths</h2>
+          <span class="mode-chip" id="commandModeLabel">Skill run</span>
+        </div>
+        <label class="field compact">
+          <span data-i18n="outputDirectoryLabel">Output directory</span>
+          <input id="outDir" type="text" value=".\promotion-output">
+        </label>
+        <label class="field compact" data-command-scope="platform-data">
+          <span data-i18n="localEvidencePlatformLabel">Local evidence platform</span>
+          <select id="platformDataPlatform">
+            <option value="xiaohongshu" data-i18n="platformXiaohongshu">Xiaohongshu</option>
+            <option value="douyin" data-i18n="platformDouyin">Douyin</option>
+            <option value="zhihu" data-i18n="platformZhihu">Zhihu</option>
+          </select>
+        </label>
+        <label class="field compact" data-command-scope="platform-data">
+          <span data-i18n="collectionModeLabel">Collection mode</span>
+          <select id="platformDataMode">
+            <option value="search" data-i18n="collectionSearch">Keyword search</option>
+            <option value="detail" data-i18n="collectionDetail">Content detail</option>
+            <option value="creator" data-i18n="collectionCreator">Creator works</option>
+          </select>
+        </label>
+        <label class="field compact" data-command-scope="platform-data">
+          <span data-i18n="targetLabel">Keyword or target URL/ID</span>
+          <input id="platformDataTarget" type="text" placeholder="AI tools or a content/creator URL" data-i18n-placeholder="targetPlaceholder">
+        </label>
+        <label class="field compact" data-command-scope="publish">
+          <span data-i18n="publishQueueLabel">Publish queue JSON</span>
+          <input id="publishQueue" type="text" value=".\promotion-output\reports\promotion-manager\publish-queue\publish-queue.json">
+        </label>
+        <label class="field compact" data-command-scope="publish">
+          <span data-i18n="publisherOverridesLabel">Publisher URL overrides</span>
+          <textarea id="platformPublishUrls" spellcheck="false" placeholder="xiaohongshu=https://creator.xiaohongshu.com/" data-i18n-placeholder="publisherOverridesPlaceholder"></textarea>
+        </label>
+        <label class="field compact" data-command-scope="evidence-inbox">
+          <span data-i18n="evidenceInboxFolderLabel">Evidence inbox folder</span>
+          <input id="evidenceInbox" type="text" value=".\promotion-evidence-inbox">
+        </label>
+        <label class="field compact" data-command-scope="automation-init automation-run automation-task">
+          <span data-i18n="automationConfigLabel">Automation config</span>
+          <input id="automationConfig" type="text" value=".\promotion-automation.json">
+        </label>
+        <label class="field compact" data-command-scope="automation-init">
+          <span data-i18n="automationOutputRootLabel">Automation output root</span>
+          <input id="automationOutputRoot" type="text" value=".\promotion-output\automation">
+        </label>
+        <label class="field compact" data-command-scope="automation-init">
+          <span data-i18n="jobIdLabel">Job ID</span>
+          <input id="automationJobId" type="text" value="product-weekly">
+        </label>
+        <label class="field compact" data-command-scope="automation-init">
+          <span data-i18n="intervalDaysLabel">Interval days</span>
+          <input id="automationIntervalDays" type="number" min="1" value="7">
+        </label>
+        <label class="field compact" data-command-scope="automation-task automation-init">
+          <span data-i18n="windowsTaskScriptLabel">Windows task script</span>
+          <input id="windowsTaskScript" type="text" value=".\register-enhe-promotion-task.ps1">
+        </label>
+        <label class="field compact" data-command-scope="automation-task automation-init">
+          <span data-i18n="windowsTaskTimeLabel">Windows task time</span>
+          <input id="windowsTaskTime" type="time" value="09:00">
+        </label>
+        <div class="option-list">
+          <label class="checkline" data-command-scope="platform-data">
+            <input id="platformDataSubComments" type="checkbox">
+            <span data-i18n="includeSubComments">Include second-level comments</span>
+          </label>
+          <label class="checkline" data-command-scope="publish">
+            <input id="runFormFill" type="checkbox" checked>
+            <span data-i18n="fillPublisherFields">Fill visible publisher fields</span>
+          </label>
+          <label class="checkline" data-command-scope="publish evidence-inbox performance">
+            <input id="captureBrowserEvidence" type="checkbox">
+            <span data-i18n="useBrowserCapture">Use browser-visible capture</span>
+          </label>
+          <label class="checkline" data-command-scope="publish evidence-inbox performance">
+            <input id="allowLocalhost" type="checkbox">
+            <span data-i18n="allowLocalhost">Allow localhost test URLs</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="autoSearchCompetitors" type="checkbox" checked>
+            <span data-i18n="autoSearchCompetitors">Auto search competitors</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enableMultiQueryDiscovery" type="checkbox" checked>
+            <span data-i18n="multiQueryDiscovery">Multi-query viral discovery</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="browserFollowUps" type="checkbox" checked>
+            <span data-i18n="browserFollowUps">Browser-assisted follow-ups</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enablePublishQueue" type="checkbox" checked>
+            <span data-i18n="enablePublishQueue">Enable publish queue</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enableBrowserPublishAssistant" type="checkbox" checked>
+            <span data-i18n="enablePublishAssistant">Enable browser publish assistant</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enableBrowserFormFill" type="checkbox">
+            <span data-i18n="enableBrowserFormFill">Enable browser form fill</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enableMetricsRecovery" type="checkbox" checked>
+            <span data-i18n="enableMetricsRecovery">Enable metrics recovery</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="enableNextRoundOptimization" type="checkbox" checked>
+            <span data-i18n="enableNextRound">Enable next-round optimization</span>
+          </label>
+          <label class="checkline" data-command-scope="automation-init">
+            <input id="alsoWindowsTask" type="checkbox">
+            <span data-i18n="alsoWindowsTask">Also generate Windows task script</span>
+          </label>
+        </div>
+      </section>
+
+      </div>
+
+      <aside class="workspace-secondary">
+      <section class="panel">
+        <div class="section-head">
+          <h2 data-i18n="subscriptionEstimateTitle">Subscription estimate</h2>
+          <span class="meter" id="creditMeter">0 credits</span>
+        </div>
+        <div class="estimate-grid">
+          <label class="field compact">
+            <span data-i18n="planLabel">Plan</span>
+            <select id="plan">
+              <option value="free" data-i18n="planFree">Free</option>
+              <option value="starter" selected>Starter</option>
+              <option value="growth">Growth</option>
+              <option value="scale">Scale</option>
+            </select>
+          </label>
+          <label class="field compact">
+            <span data-i18n="monthlyRunsLabel">Monthly runs</span>
+            <input id="monthlyRuns" type="number" min="0" value="20">
+          </label>
+          <label class="checkline">
+            <input id="deepReview" type="checkbox">
+            <span data-i18n="deepStrategyReview">Deep strategy review</span>
+          </label>
+          <label class="checkline">
+            <input id="hostedVideo" type="checkbox">
+            <span data-i18n="hostedVideoAddon">Hosted MP4 add-on</span>
+          </label>
+        </div>
+        <p id="costSummary" class="hint" data-i18n="costSummaryPrompt">Estimated hosted cost appears here.</p>
+      </section>
+
+      <section class="panel">
+        <label class="field">
+          <span data-i18n="licenseKeyLabel">License key</span>
+          <input id="licenseKey" type="password" placeholder="Paste ENHE license key" data-i18n-placeholder="licenseKeyPlaceholder">
+        </label>
+        <label class="field">
+          <span data-i18n="licenseEndpointLabel">License endpoint</span>
+          <input id="licenseEndpoint" type="url" value="https://www.enhe-tech.com.cn/api/promotion-manager/license">
+        </label>
+        <label class="field">
+          <span data-i18n="usageEndpointLabel">Usage authorization endpoint</span>
+          <input id="usageAuthorizeEndpoint" type="url" value="https://www.enhe-tech.com.cn/api/promotion-manager/usage/authorize">
+        </label>
+        <label class="field">
+          <span data-i18n="hostedRunEndpointLabel">Hosted run endpoint (off)</span>
+          <input id="hostedRunEndpoint" type="url" value="https://www.enhe-tech.com.cn/api/promotion-manager/run" disabled aria-disabled="true">
+        </label>
+        <div class="button-row">
+          <button id="saveLicense" type="button" class="secondary" data-i18n="saveButton">Save</button>
+          <button id="validateLicense" type="button" class="secondary" data-i18n="validateButton">Validate</button>
+          <button id="authorizeUsage" type="button" class="secondary" data-i18n="reserveCreditsButton" disabled aria-disabled="true">Reserve credits (off)</button>
+        </div>
+        <div class="button-row">
+          <button id="copyHostedPayload" type="button" class="secondary" data-i18n="copyHostedPayloadButton" disabled aria-disabled="true">Copy hosted payload (off)</button>
+          <button id="startHostedRun" type="button" class="secondary" data-i18n="startHostedRunButton" disabled aria-disabled="true">Hosted Worker off</button>
+        </div>
+        <div class="button-row">
+          <button id="openCheckout" type="button" class="primary" data-i18n="openCheckoutButton">Open checkout</button>
+          <button id="openPortal" type="button" class="secondary" data-i18n="billingPortalButton">Billing portal</button>
+        </div>
+        <p id="licenseMessage" class="hint" data-i18n="licenseMessagePrompt">Use ENHE website billing for production licenses.</p>
+        <p id="usageMessage" class="hint">Hosted Worker is currently off. Local Skill runs remain available.</p>
+        <p id="hostedRunMessage" class="hint">Hosted Worker is currently off. Local Skill runs remain available.</p>
+      </section>
+
+      <section class="panel command-panel">
+        <div class="section-head">
+          <h2 data-i18n="codexCommandTitle">Codex command</h2>
+          <button id="copyCommand" type="button" class="ghost" data-i18n="copyButton">Copy</button>
+        </div>
+        <textarea id="commandOutput" readonly spellcheck="false"></textarea>
+        <p class="hint" data-i18n="commandHint">Run this from the repository root. Publishing still requires credentials and approval.</p>
+      </section>
+      </aside>
+
+      <footer class="footer">
+        <a href="https://www.enhe-tech.com.cn/" target="_blank" rel="noreferrer">ENHE AI</a>
+        <a href="https://www.enhe-tech.com.cn/promotion-manager" target="_blank" rel="noreferrer" data-i18n="productPageLink">Product page</a>
+        <a href="https://github.com/hqwzhu/Viral-Product-Copy-Video-Generator.git" target="_blank" rel="noreferrer">GitHub</a>
+      </footer>
+      </div>
+      </div>
+
+      <section id="guideView" class="guide-view" hidden>
+        <div class="guide-header">
+          <div>
+            <p class="eyebrow" data-i18n="guideEyebrow">IN-EXTENSION GUIDE</p>
+            <h2 data-i18n="guideTitle">Product Promo Maker guide</h2>
+            <p class="hint" data-i18n="guideIntro">A bilingual reference for planning, evidence, and safe publishing.</p>
+          </div>
+          <button id="guideBack" type="button" class="ghost return-button" data-i18n="guideBack">Back to generator</button>
+        </div>
+        <div id="guideTabs" class="guide-tabs" role="tablist" data-i18n-aria-label="guideTabsLabel">
+          <button id="guideTabFeatures" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="guideFeatures" data-guide-tab="features" data-i18n="guideFeaturesTab">Features</button>
+          <button id="guideTabUsage" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="guideUsage" data-guide-tab="usage" data-i18n="guideUsageTab">How to use</button>
+          <button id="guideTabSubscription" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="guideSubscription" data-guide-tab="subscription" data-i18n="guideSubscriptionTab">Subscription</button>
+        </div>
+        <section id="guideFeatures" class="guide-section" role="tabpanel" aria-labelledby="guideTabFeatures">
+          <p class="hint" data-i18n="guideFeaturesIntro">Map each promotion step to a clear outcome and a safe handoff.</p>
+          <div id="guideFeatureList" class="guide-list"></div>
+        </section>
+        <section id="guideUsage" class="guide-section" role="tabpanel" aria-labelledby="guideTabUsage" hidden>
+          <p class="hint" data-i18n="guideUsageIntro">Use the popup as a controlled starting point, then review every external action.</p>
+          <div id="guideUsageList" class="guide-list"></div>
+        </section>
+        <section id="guideSubscription" class="guide-section" role="tabpanel" aria-labelledby="guideTabSubscription" hidden>
+          <p class="hint" data-i18n="guideSubscriptionIntro">Choose a plan by monthly evidence-backed runs. Hosted Worker stays off in this extension.</p>
+          <div id="guidePlans" class="plan-list"></div>
+          <div class="guide-billing">
+            <span data-i18n="guideBillingLinks">Manage billing on the ENHE website:</span>
+            <a href="https://www.enhe-tech.com.cn/promotion-manager/checkout" target="_blank" rel="noreferrer" data-i18n="guideCheckout">Checkout</a>
+            <a href="https://www.enhe-tech.com.cn/promotion-manager/billing" target="_blank" rel="noreferrer" data-i18n="guideBillingPortal">Billing portal</a>
+          </div>
+          <p class="hint" data-i18n="guideHostedWorker">Hosted Worker is off; local runs and human confirmation remain the default.</p>
+        </section>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

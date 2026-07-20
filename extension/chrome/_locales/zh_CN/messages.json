@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "ENHE 产品推广素材生成器"
+  },
+  "extensionShortName": {
+    "message": "ENHE 推广素材"
+  },
+  "extensionDescription": {
+    "message": "把产品网页变成推广文案、视频脚本和发布素材，并生成受控的本地或托管推广任务。"
+  },
+  "actionTitle": {
+    "message": "ENHE 产品推广素材生成器"
+  }
+}
