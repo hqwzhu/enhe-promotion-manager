@@ -415,6 +415,23 @@ class PublicDistributionTest(unittest.TestCase):
                 verify_distribution.verify_archives(root, release),
             )
 
+    def test_archive_validation_rejects_binary_line_ending_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root, validated = create_public_repository(Path(temp))
+            binary = root / "extension/chrome/payload.bin"
+            binary.write_bytes(b"BINARY-HEADER\r\npayload")
+            with zipfile.ZipFile(validated, "a") as archive:
+                archive.writestr("payload.bin", binary.read_bytes())
+            with mock.patch.object(build_release, "ROOT", root):
+                build_release.build_release(validated)
+            release = verify_distribution.read_json(root / "release-manifest.json")
+            binary.write_bytes(b"BINARY-HEADER\npayload")
+
+            self.assertIn(
+                "extension ZIP bytes differ from source: payload.bin",
+                verify_distribution.verify_archives(root, release),
+            )
+
     def test_release_rejects_duplicate_and_traversal_extension_members(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
@@ -509,6 +526,21 @@ class PublicDistributionTest(unittest.TestCase):
             (root_crlf / "text.txt").write_bytes(b"first\r\nsecond\r\n")
 
             self.assertEqual(
+                verify_distribution.canonical_tree_digest(root_lf, {}),
+                verify_distribution.canonical_tree_digest(root_crlf, {}),
+            )
+
+    def test_canonical_digest_preserves_binary_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root_lf = base / "tree-lf"
+            root_crlf = base / "tree-crlf"
+            root_lf.mkdir()
+            root_crlf.mkdir()
+            (root_lf / "payload.bin").write_bytes(b"BINARY-HEADER\npayload")
+            (root_crlf / "payload.bin").write_bytes(b"BINARY-HEADER\r\npayload")
+
+            self.assertNotEqual(
                 verify_distribution.canonical_tree_digest(root_lf, {}),
                 verify_distribution.canonical_tree_digest(root_crlf, {}),
             )
