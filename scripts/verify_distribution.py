@@ -435,7 +435,11 @@ def canonical_tree_digest(root: Path, release: dict) -> str:
             data = (json.dumps(normalized, ensure_ascii=False, sort_keys=True) + "\n").encode(
                 "utf-8"
             )
-        digest.update(relative_name.encode("utf-8") + b"\0" + data)
+        name = relative_name.encode("utf-8")
+        digest.update(len(name).to_bytes(8, "big"))
+        digest.update(name)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
     return digest.hexdigest()
 
 

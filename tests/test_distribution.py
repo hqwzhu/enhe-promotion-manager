@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -444,6 +445,22 @@ class PublicDistributionTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "generated|unsafe"):
                     build_release.build_release(validated)
 
+    def test_canonical_digest_frames_each_file_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root_a = base / "tree-a"
+            root_b = base / "tree-b"
+            root_a.mkdir()
+            root_b.mkdir()
+            (root_a / "a").write_bytes(b"xb\0y")
+            (root_b / "a").write_bytes(b"x")
+            (root_b / "b").write_bytes(b"y")
+
+            self.assertNotEqual(
+                verify_distribution.canonical_tree_digest(root_a, {}),
+                verify_distribution.canonical_tree_digest(root_b, {}),
+            )
+
     def test_checksums_are_sorted_uppercase_and_missing_inputs_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -538,6 +555,34 @@ class PublicDistributionTest(unittest.TestCase):
             }
 
             self.assertEqual(verify_distribution.verify_identity_and_links(root, release), [])
+
+    def test_store_submission_state_rejects_malformed_fields(self) -> None:
+        invalid_values = {
+            "submittedVersion": None,
+            "status": "not_submitted",
+            "submittedAt": None,
+            "autoPublishAfterApproval": "true",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root, _validated = create_public_repository(Path(temp))
+            original = verify_distribution.read_json(root / "release-manifest.json")
+            for field, invalid in invalid_values.items():
+                with self.subTest(field=field, invalid=invalid):
+                    release = copy.deepcopy(original)
+                    release["chromeWebStore"][field] = invalid
+                    self.assertIn(
+                        "Chrome Web Store submission state is incorrect",
+                        verify_distribution.verify_identity_and_links(root, release),
+                    )
+
+            for invalid in (False, 1):
+                with self.subTest(field="autoPublishAfterApproval", invalid=invalid):
+                    release = copy.deepcopy(original)
+                    release["chromeWebStore"]["autoPublishAfterApproval"] = invalid
+                    self.assertIn(
+                        "Chrome Web Store submission state is incorrect",
+                        verify_distribution.verify_identity_and_links(root, release),
+                    )
 
     def test_claim_scan_accepts_disclaimers_and_checks_extension_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
