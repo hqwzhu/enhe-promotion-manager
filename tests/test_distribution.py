@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -199,6 +200,30 @@ def create_public_repository(base: Path) -> tuple[Path, Path]:
 
 
 class PublicDistributionTest(unittest.TestCase):
+    def test_gitignore_protects_env_files_and_keeps_safe_example(self) -> None:
+        rules = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        self.assertIn(".env", rules)
+        self.assertIn(".env.*", rules)
+        self.assertIn("!.env.example", rules)
+
+        tracked = subprocess.run(
+            ["git", "check-ignore", "--no-index", ".env", ".env.local", ".env.example"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertIn(".env", tracked.stdout)
+        self.assertIn(".env.local", tracked.stdout)
+        self.assertNotIn(".env.example", tracked.stdout)
+
+    def test_github_actions_workflow_runs_contract_and_tests(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("python scripts/verify_distribution.py", workflow)
+        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertIn("windows-latest", workflow)
+        self.assertIn("ubuntu-latest", workflow)
+
     def test_repository_preserves_release_manifest_checksum_bytes(self) -> None:
         attributes = ROOT / ".gitattributes"
         self.assertTrue(attributes.is_file(), ".gitattributes must define checkout EOLs")
