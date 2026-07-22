@@ -6,7 +6,7 @@ Turn product pages into promotional copy, video scripts, and publishing assets.
 
 Built for independent developers, product teams, content operators, and service providers: start with a product URL, prepare evidence-backed promotion materials locally, and retain control of the final publishing decision.
 
-**Start now:** [Download the Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip) · [Download the Chrome extension ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) · [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
+**Start now:** [Download the published v0.5.3 Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip) · [Download the published v0.5.3 Chrome extension ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) · [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
 
 ![ENHE Product Promo Maker full workspace](assets/workspace-preview.en.png)
 
@@ -73,8 +73,8 @@ The existing ENHE website manages checkout, licenses, credits, and billing. The 
 
 ## Start in five minutes
 
-1. Download the [Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip), or clone the public repository.
-2. Extract the Skill. Install the extension from the [Chrome Web Store](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl), or download the [extension ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) and follow the guide for loading the unpacked extension.
+1. Download the published [v0.5.3 Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip), or clone the v0.5.4 source/release candidate.
+2. Extract the Skill. Install the published v0.5.3 extension from the [Chrome Web Store](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl), or download the [v0.5.3 extension ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) and follow the guide for loading the unpacked extension.
 3. Open a product page, click "Use current tab" in the extension, and select the platforms and workflow depth.
 4. Generate, review, and copy the local command. You can also run the Skill entry point directly without the extension.
 5. Open the batch report first, then use the actual `outputDir` to review facts, copy, video, images, and publishing packs.
@@ -127,10 +127,11 @@ Research uses only public, browser-visible, officially authorized, or user-provi
 
 ## Current version and downloads
 
-- Public repository, Skill, and extension source: `0.5.3`
-- Current public Chrome Web Store version before this update: `0.5.2`
-- [Download Skill v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)
-- [Download Chrome extension v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip)
+- Public repository, Skill, and extension source/release candidate: `0.5.4`
+- Current public Chrome Web Store version: `0.5.3` (published)
+- v0.5.4 has not yet been submitted to the Chrome Web Store for review.
+- [Download published Skill v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)
+- [Download published Chrome extension v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip)
 - [View all GitHub Releases](https://github.com/hqwzhu/enhe-promotion-manager/releases)
 - [Existing Chrome Web Store listing](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
 

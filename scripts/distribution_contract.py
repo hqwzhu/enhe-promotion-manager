@@ -7,16 +7,22 @@ import hashlib
 import os
 import re
 import stat
+import zipfile
 from pathlib import Path
 
 
-VERSION = "0.5.3"
-PUBLISHED_STORE_VERSION = "0.5.2"
-SUBMITTED_STORE_VERSION = VERSION
-STORE_REVIEW_STATUS = "pending_review"
-STORE_SUBMITTED_AT = "2026-07-20"
-STORE_AUTO_PUBLISH_AFTER_APPROVAL = True
+VERSION = "0.5.4"
+PUBLISHED_STORE_VERSION = "0.5.3"
+FIXED_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+FIXED_ZIP_CREATE_SYSTEM = 3
+FIXED_ZIP_EXTERNAL_ATTR = (stat.S_IFREG | 0o644) << 16
+FIXED_ZIP_COMPRESSION = zipfile.ZIP_DEFLATED
+FIXED_ZIP_COMPRESSLEVEL = 9
 STORE_ITEM_ID = "dloklkbnmoigemnfigbkibogmgbieppl"
+STORE_LISTING_URL = (
+    "https://chromewebstore.google.com/detail/enhe-promotion-manager/"
+    f"{STORE_ITEM_ID}"
+)
 PUBLIC_REPOSITORY = "hqwzhu/enhe-promotion-manager"
 PRODUCT_EN = "ENHE Product Promo Maker"
 PRODUCT_ZH = "ENHE 产品推广素材生成器"
@@ -72,6 +78,38 @@ _SECRET_PATTERNS = (
     ),
     ("live_license", re.compile(r"\bpm_live_[A-Za-z0-9]{20,}\b")),
 )
+
+
+def deterministic_zip_info(name: str) -> zipfile.ZipInfo:
+    """Return normalized metadata for a regular file in a release ZIP."""
+    info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_TIMESTAMP)
+    info.create_system = FIXED_ZIP_CREATE_SYSTEM
+    info.external_attr = FIXED_ZIP_EXTERNAL_ATTR
+    info.compress_type = FIXED_ZIP_COMPRESSION
+    info.extra = b""
+    info.comment = b""
+    return info
+
+
+def nondeterministic_zip_members(archive: zipfile.ZipFile) -> list[str]:
+    """Return archive/member labels whose ZIP metadata violates the release contract."""
+    infos = archive.infolist()
+    drift: list[str] = []
+    if archive.comment != b"":
+        drift.append("<archive-comment>")
+    if [info.filename for info in infos] != sorted(info.filename for info in infos):
+        drift.append("<member-order>")
+    for info in infos:
+        if (
+            info.date_time != FIXED_ZIP_TIMESTAMP
+            or info.create_system != FIXED_ZIP_CREATE_SYSTEM
+            or info.external_attr != FIXED_ZIP_EXTERNAL_ATTR
+            or info.compress_type != FIXED_ZIP_COMPRESSION
+            or info.extra != b""
+            or info.comment != b""
+        ):
+            drift.append(info.filename)
+    return list(dict.fromkeys(drift))
 
 
 def extension_command_refs(text: str) -> list[str]:

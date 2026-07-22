@@ -21,8 +21,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts import distribution_contract as release_contract
+
+
 SCRIPT = ROOT / "scripts" / "promotion_manager.py"
 PRODUCT_INTAKE = ROOT / "scripts" / "product_intake.py"
 BROWSER_SNAPSHOT = ROOT / "scripts" / "browser_snapshot.py"
@@ -406,9 +410,14 @@ class PromotionManagerScriptTest(unittest.TestCase):
         self.assertEqual(youtube["video"]["status"], "ready")
         self.assertEqual(Path(youtube["video"]["path"]), video_path)
         for item in publish_pack:
-            self.assertTrue(Path(item["cover"]["path"]).exists(), item["platform"])
+            cover_path = Path(item["cover"]["path"])
+            self.assertTrue(cover_path.exists(), item["platform"])
+            self.assertEqual(cover_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n", item["platform"])
             self.assertTrue(item["detailImages"], item["platform"])
-            self.assertTrue(all(Path(image["path"]).exists() for image in item["detailImages"]), item["platform"])
+            for image in item["detailImages"]:
+                image_path = Path(image["path"])
+                self.assertTrue(image_path.exists(), item["platform"])
+                self.assertEqual(image_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n", item["platform"])
             self.assertTrue(item["assets"], item["platform"])
             self.assertTrue(item["firstBatch"]["pinnedComment"], item["platform"])
 
@@ -7027,7 +7036,11 @@ Prompt templates for product copy, SEO content, and video scripts.
         self.assertIn("Hosted run endpoint", popup)
         self.assertIn("Reserve credits", popup)
         self.assertIn("Copy hosted payload", popup)
-        self.assertIn("Start hosted run", popup)
+        self.assertIn("Hosted Worker off", popup)
+        self.assertRegex(
+            popup,
+            r'<button(?=[^>]*\bid="startHostedRun")(?=[^>]*\bdisabled\b)(?=[^>]*\baria-disabled="true")[^>]*>',
+        )
         self.assertIn("Open checkout", popup)
         self.assertIn("Billing portal", popup)
         self.assertIn("www.enhe-tech.com.cn", popup)
@@ -7043,6 +7056,8 @@ Prompt templates for product copy, SEO content, and video scripts.
         self.assertIn("startHostedRun", script)
         self.assertIn("usageAuthorizeEndpoint", script)
         self.assertIn("hostedRunEndpoint", script)
+        self.assertIn("const HOSTED_WORKER_ENABLED = false;", script)
+        self.assertIn("applyHostedWorkerState", script)
         self.assertIn("idempotencyKey", script)
         self.assertIn("estimatedMonthlyCredits", script)
         self.assertIn("COST_PER_CREDIT", script)
@@ -7116,7 +7131,7 @@ Prompt templates for product copy, SEO content, and video scripts.
         popup = (BROWSER_EXTENSION / "popup.html").read_text(encoding="utf-8")
         script = (BROWSER_EXTENSION / "popup.js").read_text(encoding="utf-8")
 
-        self.assertEqual(manifest["version"], "0.5.3")
+        self.assertEqual(manifest["version"], release_contract.VERSION)
         self.assertEqual(manifest["default_locale"], "en")
         self.assertEqual(manifest["name"], "__MSG_extensionName__")
         self.assertEqual(manifest["action"]["default_title"], "__MSG_actionTitle__")
@@ -7127,7 +7142,7 @@ Prompt templates for product copy, SEO content, and video scripts.
         self.assertIn("data-i18n-aria-label=", popup)
         self.assertIn("chrome.i18n.getUILanguage", script)
         self.assertIn('"uiLanguage"', script)
-        self.assertIn("chrome.storage.local.set({ uiLanguage", script)
+        self.assertIn("writeLocalStorage({ uiLanguage: currentLanguage })", script)
         self.assertIn("aria-pressed", script)
 
         english_block = script.split("const EN_TRANSLATIONS = Object.freeze({", 1)[1].split("});", 1)[0]
@@ -7160,7 +7175,7 @@ Prompt templates for product copy, SEO content, and video scripts.
         script = (BROWSER_EXTENSION / "popup.js").read_text(encoding="utf-8")
         contract = json.loads((BROWSER_EXTENSION / "billing-contract.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(manifest["version"], "0.5.3")
+        self.assertEqual(manifest["version"], release_contract.VERSION)
         self.assertEqual(manifest["manifest_version"], 3)
         self.assertEqual(manifest["permissions"], ["activeTab", "storage", "clipboardWrite"])
         self.assertEqual(manifest["host_permissions"], ["https://www.enhe-tech.com.cn/*"])
@@ -7378,9 +7393,9 @@ Prompt templates for product copy, SEO content, and video scripts.
 
         report = json.loads((out_dir / "dist/browser-extension-package-report.json").read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "ready")
-        self.assertEqual(report["version"], "0.5.3")
+        self.assertEqual(report["version"], release_contract.VERSION)
         package_path = Path(report["package"])
-        self.assertEqual(package_path.name, "enhe-promotion-manager-0.5.3.zip")
+        self.assertEqual(package_path.name, f"enhe-promotion-manager-{release_contract.VERSION}.zip")
         self.assertTrue(package_path.exists())
         archive_sha256 = hashlib.sha256(package_path.read_bytes()).hexdigest().upper()
         self.assertEqual(report.get("archiveName"), package_path.name)
@@ -7388,7 +7403,9 @@ Prompt templates for product copy, SEO content, and video scripts.
         report_markdown = (out_dir / "dist/browser-extension-package-report.md").read_text(encoding="utf-8")
         self.assertIn(f"- Archive: `{package_path.name}`", report_markdown)
         self.assertIn(f"- SHA-256: `{archive_sha256}`", report_markdown)
-        self.assertIn("- Version: `0.5.3`", report_markdown)
+        self.assertIn(f"- Version: `{release_contract.VERSION}`", report_markdown)
+        self.assertTrue(report["checks"]["versionMatchesDistributionContract"])
+        self.assertTrue(report["checks"]["deterministicArchiveMetadata"])
         self.assertTrue(report["checks"]["manifestV3"])
         self.assertTrue(report["checks"]["icons"])
         self.assertTrue(report["checks"]["noRemoteExecutableCode"])
@@ -7401,7 +7418,17 @@ Prompt templates for product copy, SEO content, and video scripts.
             "https://www.enhe-tech.com.cn/promotion-manager/support",
         )
         with zipfile.ZipFile(package_path) as package:
-            names = set(package.namelist())
+            infos = package.infolist()
+            names = {info.filename for info in infos}
+            self.assertEqual([info.filename for info in infos], sorted(names))
+            self.assertEqual(package.comment, b"")
+            for info in infos:
+                self.assertEqual(info.date_time, release_contract.FIXED_ZIP_TIMESTAMP)
+                self.assertEqual(info.create_system, release_contract.FIXED_ZIP_CREATE_SYSTEM)
+                self.assertEqual(info.external_attr, release_contract.FIXED_ZIP_EXTERNAL_ATTR)
+                self.assertEqual(info.compress_type, release_contract.FIXED_ZIP_COMPRESSION)
+                self.assertEqual(info.extra, b"")
+                self.assertEqual(info.comment, b"")
         self.assertIn("manifest.json", names)
         self.assertIn("popup.html", names)
         self.assertIn("popup.css", names)
@@ -7413,36 +7440,128 @@ Prompt templates for product copy, SEO content, and video scripts.
         self.assertIn("_locales/en/messages.json", names)
         self.assertIn("_locales/zh_CN/messages.json", names)
 
-    def test_browser_extension_package_defaults_to_versioned_dist_without_touching_v052_artifacts(self) -> None:
-        out_dir = Path(tempfile.mkdtemp(prefix="browser-extension-default-package-test-"))
-        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
-        historical_paths = [
-            ROOT / "dist" / "enhe-promotion-manager-0.5.2.zip",
-            ROOT / "dist" / "browser-extension-package-report.json",
-            ROOT / "dist" / "browser-extension-package-report.md",
-        ]
-        historical_contents = {path: path.read_bytes() for path in historical_paths}
+    def test_browser_extension_package_is_deterministic_across_source_metadata_changes(self) -> None:
+        base = Path(tempfile.mkdtemp(prefix="browser-extension-determinism-test-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        project_dir = base / "mini-project"
+        scripts_dir = project_dir / "scripts"
+        extension_dir = project_dir / "browser-extension"
+        scripts_dir.mkdir(parents=True)
+        shutil.copy2(PACKAGE_BROWSER_EXTENSION, scripts_dir / PACKAGE_BROWSER_EXTENSION.name)
+        shutil.copy2(ROOT / "scripts" / "distribution_contract.py", scripts_dir / "distribution_contract.py")
+        shutil.copytree(BROWSER_EXTENSION, extension_dir)
 
+        first_out = project_dir / "first"
+        second_out = project_dir / "second"
         subprocess.run(
-            [sys.executable, str(PACKAGE_BROWSER_EXTENSION)],
+            [sys.executable, str(scripts_dir / PACKAGE_BROWSER_EXTENSION.name), "--out-dir", str(first_out)],
+            cwd=project_dir,
             check=True,
-            cwd=out_dir,
+        )
+        for index, path in enumerate(sorted(item for item in extension_dir.rglob("*") if item.is_file())):
+            timestamp = 946684800 + index * 2
+            os.utime(path, (timestamp, timestamp))
+            path.chmod(0o600 if index % 2 else 0o644)
+        subprocess.run(
+            [sys.executable, str(scripts_dir / PACKAGE_BROWSER_EXTENSION.name), "--out-dir", str(second_out)],
+            cwd=project_dir,
+            check=True,
         )
 
-        versioned_dir = out_dir / "dist" / "v0.5.3"
+        archive_name = f"enhe-promotion-manager-{release_contract.VERSION}.zip"
+        first_bytes = (first_out / archive_name).read_bytes()
+        second_bytes = (second_out / archive_name).read_bytes()
+        self.assertEqual(first_bytes, second_bytes)
+        self.assertEqual(hashlib.sha256(first_bytes).digest(), hashlib.sha256(second_bytes).digest())
+
+    def test_browser_extension_package_rejects_manifest_contract_version_drift(self) -> None:
+        base = Path(tempfile.mkdtemp(prefix="browser-extension-version-drift-test-"))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        project_dir = base / "mini-project"
+        scripts_dir = project_dir / "scripts"
+        extension_dir = project_dir / "browser-extension"
+        scripts_dir.mkdir(parents=True)
+        shutil.copy2(PACKAGE_BROWSER_EXTENSION, scripts_dir / PACKAGE_BROWSER_EXTENSION.name)
+        shutil.copy2(ROOT / "scripts" / "distribution_contract.py", scripts_dir / "distribution_contract.py")
+        shutil.copytree(BROWSER_EXTENSION, extension_dir)
+        manifest_path = extension_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["version"] = "9.9.9"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        out_dir = project_dir / "dist"
+        result = subprocess.run(
+            [sys.executable, str(scripts_dir / PACKAGE_BROWSER_EXTENSION.name), "--out-dir", str(out_dir)],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads((out_dir / "browser-extension-package-report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "blocked")
+        self.assertIn("versionMatchesDistributionContract", report["missing"])
+        self.assertFalse((out_dir / "enhe-promotion-manager-9.9.9.zip").exists())
+
+    def test_browser_extension_package_defaults_to_v054_without_touching_v053_archive(self) -> None:
+        out_dir = Path(tempfile.mkdtemp(prefix="browser-extension-default-package-test-"))
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        project_dir = out_dir / "mini-project"
+        package_script = project_dir / "scripts" / "package_browser_extension.py"
+        extension_dir = project_dir / "browser-extension"
+        package_script.parent.mkdir(parents=True)
+        shutil.copy2(PACKAGE_BROWSER_EXTENSION, package_script)
+        shutil.copy2(ROOT / "scripts" / "distribution_contract.py", package_script.parent / "distribution_contract.py")
+        for relative_path in [
+            "manifest.json",
+            "popup.html",
+            "popup.css",
+            "popup.js",
+            "billing-contract.json",
+            "icons/icon16.png",
+            "icons/icon48.png",
+            "icons/icon128.png",
+        ]:
+            destination = extension_dir / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(BROWSER_EXTENSION / relative_path, destination)
+
+        historical_paths = [
+            project_dir / "dist" / "v0.5.3" / "enhe-promotion-manager-0.5.3.zip",
+            project_dir / "dist" / "v0.5.3" / "browser-extension-package-report.json",
+            project_dir / "dist" / "v0.5.3" / "browser-extension-package-report.md",
+        ]
+        historical_contents = {
+            path: f"controlled historical sentinel: {path.name}".encode("utf-8")
+            for path in historical_paths
+        }
+        for path, contents in historical_contents.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+
+        subprocess.run(
+            [sys.executable, str(package_script)],
+            check=True,
+            cwd=project_dir,
+        )
+
+        versioned_dir = project_dir / "dist" / f"v{release_contract.VERSION}"
         report_path = versioned_dir / "browser-extension-package-report.json"
         self.assertTrue(report_path.exists())
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "ready")
-        self.assertEqual(report["version"], "0.5.3")
-        self.assertTrue((versioned_dir / "enhe-promotion-manager-0.5.3.zip").exists())
-        self.assertFalse((out_dir / "dist" / "browser-extension-package-report.json").exists())
-        self.assertFalse((out_dir / "dist" / "browser-extension-package-report.md").exists())
+        self.assertEqual(report["version"], release_contract.VERSION)
+        self.assertTrue(
+            (versioned_dir / f"enhe-promotion-manager-{release_contract.VERSION}.zip").exists()
+        )
         for path, expected in historical_contents.items():
             self.assertEqual(path.read_bytes(), expected, str(path))
 
-    def test_current_readmes_use_isolated_v053_package_command(self) -> None:
-        expected_command = 'python scripts\\package_browser_extension.py --out-dir ".\\dist\\v0.5.3"'
+    def test_current_readmes_use_isolated_v054_package_command(self) -> None:
+        expected_command = (
+            'python scripts\\package_browser_extension.py --out-dir '
+            f'".\\dist\\v{release_contract.VERSION}"'
+        )
         retired_tokens = [
             'python scripts\\package_browser_extension.py --out-dir ".\\dist"',
             r"dist\enhe-promotion-manager-<version>.zip",
@@ -7461,12 +7580,15 @@ Prompt templates for product copy, SEO content, and video scripts.
                 for retired_token in retired_tokens:
                     self.assertNotIn(retired_token, readme)
 
-    def test_browser_extension_guides_use_isolated_v053_package_outputs(self) -> None:
-        expected_command = 'python scripts\\package_browser_extension.py --out-dir ".\\dist\\v0.5.3"'
+    def test_browser_extension_guides_use_isolated_v054_package_outputs(self) -> None:
+        expected_command = (
+            'python scripts\\package_browser_extension.py --out-dir '
+            f'".\\dist\\v{release_contract.VERSION}"'
+        )
         expected_outputs = [
-            r"dist\v0.5.3\enhe-promotion-manager-0.5.3.zip",
-            r"dist\v0.5.3\browser-extension-package-report.json",
-            r"dist\v0.5.3\browser-extension-package-report.md",
+            fr"dist\v{release_contract.VERSION}\enhe-promotion-manager-{release_contract.VERSION}.zip",
+            fr"dist\v{release_contract.VERSION}\browser-extension-package-report.json",
+            fr"dist\v{release_contract.VERSION}\browser-extension-package-report.md",
         ]
         retired_tokens = [
             'python scripts\\package_browser_extension.py --out-dir ".\\dist"',
@@ -7482,7 +7604,7 @@ Prompt templates for product copy, SEO content, and video scripts.
         ]:
             guide = guide_path.read_text(encoding="utf-8")
             with self.subTest(guide=guide_path):
-                self.assertIn("0.5.3", guide)
+                self.assertIn(release_contract.VERSION, guide)
                 self.assertIn(expected_command, guide)
                 for output in expected_outputs:
                     self.assertIn(output, guide)
@@ -7839,8 +7961,10 @@ Prompt templates for product copy, SEO content, and video scripts.
         for asset_line in [
             "- `browser-extension/icons/icon128.png` — global store icon with the ENHE logo and "
             "the label `ENHE Promo Maker`.",
-            "- `dist/v0.5.3/store-assets/enhe-product-promo-maker-en-1280x800.png` — English popup.",
-            "- `dist/v0.5.3/store-assets/enhe-product-promo-maker-zh-1280x800.png` — Simplified Chinese popup.",
+            f"- `dist/v{release_contract.VERSION}/store-assets/"
+            "enhe-product-promo-maker-en-1280x800.png` — English popup.",
+            f"- `dist/v{release_contract.VERSION}/store-assets/"
+            "enhe-product-promo-maker-zh-1280x800.png` — Simplified Chinese popup.",
         ]:
             self.assertIn(asset_line, screenshot_lines)
 
@@ -7861,44 +7985,84 @@ Prompt templates for product copy, SEO content, and video scripts.
                 self.assertIn(marker, text, f"{label} missing {marker}")
             self.assertIn("dist/v0.5.3", text.replace("\\", "/"))
 
-        state_markers_en = [
-            "Check the dashboard status of the current v0.5.2 submission before uploading v0.5.3:",
-            "If v0.5.2 is pending review, do not replace it; wait for the review result.",
-            "If v0.5.2 is published, continue with the v0.5.3 upload as an update.",
-            "If v0.5.2 is rejected, record the rejection reason, fix any required issue, then upload v0.5.3.",
-        ]
-        state_markers_zh = [
-            "上传 v0.5.3 前，先检查后台中当前 v0.5.2 提交的状态：",
-            "如果 v0.5.2 正在审核，不要替换该提交；等待审核结果。",
-            "如果 v0.5.2 已发布，将 v0.5.3 作为更新继续上传。",
-            "如果 v0.5.2 被拒绝，记录拒绝原因，修复必须处理的问题后再上传 v0.5.3。",
-        ]
-        upload_step_en = "Upload `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`."
+        self.assertIn(
+            "Its validated archive is `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`; "
+            "this is an immutable historical verification asset, not a package to upload again.",
+            submission_en,
+        )
+        self.assertIn(
+            "其已验证归档为 `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`；"
+            "它只是不可修改的历史验证资产，不是再次上传的操作指令。",
+            submission_zh,
+        )
+        for text in (submission_en, submission_zh):
+            self.assertNotIn("v0.5.2", text)
+            self.assertIn("<NEXT_VERSION>", text)
+        self.assertNotIn("pending review", submission_en.lower())
+        self.assertNotIn(
+            "Upload `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`",
+            submission_en,
+        )
+        self.assertNotIn(
+            "上传 `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`",
+            submission_zh,
+        )
+
+        chrome_upload_step_en = (
+            f"Package v{release_contract.VERSION} and upload "
+            f"`dist\\v{release_contract.VERSION}\\enhe-promotion-manager-"
+            f"{release_contract.VERSION}.zip` "
+            "as a later update to this item."
+        )
         screenshots_step_en = (
-            "Upload the v0.5.3 icon and both reviewed localized screenshots from "
-            "`dist\\v0.5.3\\store-assets`."
+            "Upload next-version icons and both reviewed localized screenshots from "
+            "`dist\\v<NEXT_VERSION>\\store-assets`."
         )
         chrome_submit_step_en = (
-            "Paste `docs/store/reviewer-notes.md`, confirm the item ID again, and submit for "
-            "review. If login, account verification, or captcha is required, pause for the "
-            "account owner to complete it."
+            "Paste `docs/store/reviewer-notes.md`, confirm the item ID again, and submit the "
+            "next version for review. If login, account verification, or captcha is required, "
+            "pause for the account owner to complete it."
+        )
+        edge_status_step_en = (
+            "Verify the current Edge listing status independently. If v0.5.3 is published for "
+            "that Edge item, increment the manifest version for the next version; if v0.5.3 is "
+            "not published, follow the applicable Edge submission flow without treating the "
+            "Chrome publication as Edge publication."
+        )
+        edge_upload_step_en = (
+            "Package and upload "
+            "`dist\\v<NEXT_VERSION>\\enhe-promotion-manager-<NEXT_VERSION>.zip` "
+            "as the next-version update."
         )
         edge_submit_step_en = (
-            "Confirm the generated publishing assets require user approval, then submit for "
-            "certification. If login, account verification, or captcha is required, pause for "
-            "the account owner to complete it."
+            "Confirm the generated publishing assets require user approval, then submit the "
+            "next version for certification. If login, account verification, or captcha is "
+            "required, pause for the account owner to complete it."
         )
-        upload_step_zh = "上传 `dist\\v0.5.3\\enhe-promotion-manager-0.5.3.zip`。"
+        chrome_upload_step_zh = (
+            f"打包 v{release_contract.VERSION}，并在后续将 `dist\\v{release_contract.VERSION}\\"
+            f"enhe-promotion-manager-{release_contract.VERSION}.zip` "
+            "作为该条目的更新上传。"
+        )
         screenshots_step_zh = (
-            "上传 v0.5.3 图标和 `dist\\v0.5.3\\store-assets` 中已审核的两张本地化截图。"
+            "上传 `dist\\v<NEXT_VERSION>\\store-assets` 中下一版图标和两张已审核的本地化截图。"
         )
         chrome_submit_step_zh = (
-            "粘贴 `docs/store/reviewer-notes.md`，再次确认条目 ID 后提交审核。若需要登录、"
-            "账号验证或 captcha，由账号所有者完成后再继续。"
+            "粘贴 `docs/store/reviewer-notes.md`，再次确认条目 ID 后提交下一版审核。"
+            "若需要登录、账号验证或 captcha，由账号所有者完成后再继续。"
+        )
+        edge_status_step_zh = (
+            "独立核验当前 Edge 条目状态。若 v0.5.3 已在该 Edge 条目发布，再提高 manifest "
+            "的版本号；若 v0.5.3 尚未发布，则按适用的 Edge 提交流程处理，不得把 Chrome "
+            "的发布状态当作 Edge 已发布。"
+        )
+        edge_upload_step_zh = (
+            "打包并上传 `dist\\v<NEXT_VERSION>\\enhe-promotion-manager-<NEXT_VERSION>.zip` "
+            "作为下一版更新。"
         )
         edge_submit_step_zh = (
-            "确认生成的发布素材需要用户批准后提交认证。若需要登录、账号验证或 captcha，"
-            "由账号所有者完成后再继续。"
+            "确认生成的发布素材需要用户批准后提交下一版认证。若需要登录、账号验证或 "
+            "captcha，由账号所有者完成后再继续。"
         )
         submission_sections = [
             (
@@ -7906,52 +8070,38 @@ Prompt templates for product copy, SEO content, and video scripts.
                 submission_en.split("## Chrome Web Store Steps", 1)[1].split(
                     "## Microsoft Edge Add-ons Steps", 1
                 )[0],
-                state_markers_en,
-                upload_step_en,
-                [upload_step_en, screenshots_step_en, chrome_submit_step_en],
+                [chrome_upload_step_en, screenshots_step_en, chrome_submit_step_en],
             ),
             (
                 "English Edge steps",
                 submission_en.split("## Microsoft Edge Add-ons Steps", 1)[1].split(
                     "## Reviewer Notes Template", 1
                 )[0],
-                state_markers_en,
-                upload_step_en,
-                [upload_step_en, screenshots_step_en, edge_submit_step_en],
+                [edge_status_step_en, edge_upload_step_en, screenshots_step_en, edge_submit_step_en],
             ),
             (
                 "Chinese Chrome steps",
                 submission_zh.split("## Chrome Web Store 上架步骤", 1)[1].split(
                     "## Microsoft Edge Add-ons 上架步骤", 1
                 )[0],
-                state_markers_zh,
-                upload_step_zh,
-                [upload_step_zh, screenshots_step_zh, chrome_submit_step_zh],
+                [chrome_upload_step_zh, screenshots_step_zh, chrome_submit_step_zh],
             ),
             (
                 "Chinese Edge steps",
                 submission_zh.split("## Microsoft Edge Add-ons 上架步骤", 1)[1].split(
                     "## 审核备注模板", 1
                 )[0],
-                state_markers_zh,
-                upload_step_zh,
-                [upload_step_zh, screenshots_step_zh, edge_submit_step_zh],
+                [edge_status_step_zh, edge_upload_step_zh, screenshots_step_zh, edge_submit_step_zh],
             ),
         ]
-        for label, section, state_markers, upload_step, required_steps in submission_sections:
-            ordered_markers = [*state_markers, upload_step]
-            for marker in ordered_markers:
-                self.assertIn(marker, section, f"{label} missing state gate: {marker}")
-            marker_positions = [section.index(marker) for marker in ordered_markers]
-            self.assertTrue(
-                all(left < right for left, right in zip(marker_positions, marker_positions[1:])),
-                f"{label} must order check, pending, published, rejected, then upload",
-            )
+        for label, section, required_steps in submission_sections:
             normalized_section_lines = [
                 re.sub(r"^\d+\.\s*", "", line) for line in section.splitlines()
             ]
             for required_step in required_steps:
                 self.assertIn(required_step, normalized_section_lines, f"{label} missing step")
+            step_positions = [normalized_section_lines.index(step) for step in required_steps]
+            self.assertEqual(step_positions, sorted(step_positions), f"{label} steps are out of order")
 
         submission_en_lines = [
             re.sub(r"^\d+\.\s*", "", line) for line in submission_en.splitlines()
@@ -8526,7 +8676,21 @@ Prompt templates for product copy, SEO content, and video scripts.
             {"ready_review_gated_autonomy", "partial_ready_review_gated_autonomy"},
         )
         self.assertEqual(by_requirement["github_documentation_and_install_tutorial"]["status"], "ready")
-        self.assertEqual(by_requirement["browser_extension_operator_ui_subscription"]["status"], "ready")
+        extension_requirement = by_requirement["browser_extension_operator_ui_subscription"]
+        self.assertEqual(extension_requirement["status"], "partial_ready")
+        self.assertIn(
+            "browser-extension/popup.js declares HOSTED_WORKER_ENABLED = false; hosted usage reservation and run submission are disabled",
+            extension_requirement["missing"],
+        )
+        self.assertTrue(
+            any("Local Skill runs remain available" in limit for limit in extension_requirement["limits"])
+        )
+        self.assertFalse(
+            any(
+                "reserve hosted usage credits, start hosted runs" in limit
+                for limit in extension_requirement["limits"]
+            )
+        )
         self.assertEqual(by_requirement["completion_roadmap_to_100_percent"]["status"], "ready")
         self.assertEqual(by_requirement["zh_cn_operator_action_checklist_to_100_percent"]["status"], "ready")
         self.assertEqual(by_requirement["phase_progress_reporting"]["status"], "ready")

@@ -6,7 +6,7 @@ The Chrome extension is a Manifest V3 local entry point that turns the current p
 
 ### Chrome Web Store
 
-Open the [existing store listing](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl) and install it. The current public store version before update is `0.5.2`.
+Open the [published Chrome Web Store listing](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl) and install it. The current public store version is `0.5.3`; source/release candidate `0.5.4` has not yet been submitted for Chrome review.
 
 ### Unpacked extension
 
@@ -15,7 +15,7 @@ git clone https://github.com/hqwzhu/enhe-promotion-manager.git
 cd enhe-promotion-manager
 ```
 
-Open Developer mode at `chrome://extensions`, choose "Load unpacked," and select `extension\chrome`. The public source distribution version is `0.5.3`.
+Open Developer mode at `chrome://extensions`, choose "Load unpacked," and select `extension\chrome`. The public source/release candidate version is `0.5.4`.
 
 ## Current-tab capture
 

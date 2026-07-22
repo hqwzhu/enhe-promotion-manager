@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import distribution_contract as contract
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION_DIR = ROOT / "browser-extension"
@@ -64,6 +66,7 @@ def build_report(out_dir: Path) -> dict[str, Any]:
     files = package_files()
     checks = {
         "requiredFiles": not missing,
+        "versionMatchesDistributionContract": str(manifest.get("version", "")) == contract.VERSION,
         "manifestV3": manifest.get("manifest_version") == 3,
         "icons": icons_ready(manifest),
         "allowedPermissions": permissions_ready(manifest),
@@ -71,9 +74,10 @@ def build_report(out_dir: Path) -> dict[str, Any]:
         "noRemoteExecutableCode": no_remote_executable_code(files),
         "noUnsafeEval": no_unsafe_eval(manifest, files),
         "packageCreated": False,
+        "deterministicArchiveMetadata": False,
     }
     for key, ready in checks.items():
-        if key != "packageCreated" and not ready:
+        if key not in {"packageCreated", "deterministicArchiveMetadata"} and not ready:
             missing.append(key)
     status = "ready" if not missing else "blocked"
     if status == "ready":
@@ -82,6 +86,14 @@ def build_report(out_dir: Path) -> dict[str, Any]:
         if not checks["packageCreated"]:
             status = "blocked"
             missing.append("packageCreated")
+        else:
+            with zipfile.ZipFile(package_path) as archive:
+                checks["deterministicArchiveMetadata"] = not contract.nondeterministic_zip_members(
+                    archive
+                )
+            if not checks["deterministicArchiveMetadata"]:
+                status = "blocked"
+                missing.append("deterministicArchiveMetadata")
     archive_sha256 = sha256_file(package_path) if checks["packageCreated"] else ""
     return {
         "generatedAt": TODAY,
@@ -126,9 +138,20 @@ def package_files() -> list[Path]:
 
 
 def write_zip(package_path: Path, files: list[Path]) -> None:
-    with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for rel in files:
-            archive.write(EXTENSION_DIR / rel, rel.as_posix())
+    with zipfile.ZipFile(
+        package_path,
+        "w",
+        compression=contract.FIXED_ZIP_COMPRESSION,
+        compresslevel=contract.FIXED_ZIP_COMPRESSLEVEL,
+    ) as archive:
+        archive.comment = b""
+        for rel in sorted(files, key=lambda item: item.as_posix()):
+            archive.writestr(
+                contract.deterministic_zip_info(rel.as_posix()),
+                (EXTENSION_DIR / rel).read_bytes(),
+                compress_type=contract.FIXED_ZIP_COMPRESSION,
+                compresslevel=contract.FIXED_ZIP_COMPRESSLEVEL,
+            )
 
 
 def sha256_file(path: Path) -> str:

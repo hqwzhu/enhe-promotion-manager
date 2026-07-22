@@ -1,18 +1,17 @@
 {
-  "version": "0.5.3",
+  "version": "0.5.4",
   "sourceRepository": "https://github.com/hqwzhu/Viral-Product-Copy-Video-Generator",
-  "sourceCommit": "897547e1b8efd9ce0fd2655b2ff16da5d0235097",
+  "sourceCommit": "c589b1a0d4a163d39f47df85c4d72b385d9bec60",
   "publicRepository": "https://github.com/hqwzhu/enhe-promotion-manager",
-  "treeDigest": "773a7349621dc5847459bcfd615f3f31634f96e4814a9af29943c5ce49c6f551",
-  "skillArchive": "enhe-product-promo-maker-skill-0.5.3.zip",
-  "extensionArchive": "enhe-promotion-manager-extension-0.5.3.zip",
+  "treeDigest": "536714de095b0ba675f9ed1997258ff102bcec21cca16ccdce9694af66b74b40",
+  "skillArchive": "enhe-product-promo-maker-skill-0.5.4.zip",
+  "extensionArchive": "enhe-promotion-manager-extension-0.5.4.zip",
   "chromeWebStore": {
     "itemId": "dloklkbnmoigemnfigbkibogmgbieppl",
-    "publishedVersion": "0.5.2",
-    "submittedVersion": "0.5.3",
-    "status": "pending_review",
-    "submittedAt": "2026-07-20",
-    "autoPublishAfterApproval": true
+    "publishedVersion": "0.5.3",
+    "submittedVersion": null,
+    "status": "published",
+    "listingUrl": "https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl"
   },
   "syncAudit": {
     "scope": "non-payment extension commands to shipped Skill scripts",
@@ -39,19 +38,19 @@
     "status": "ready"
   },
   "artifacts": {
-    "enhe-product-promo-maker-skill-0.5.3.zip": {
-      "bytes": 621969,
-      "sha256": "D131E8894AE73EBCA2B98CAF3CBF8B5EBDDA8B0AE33AB98CBBEBBCFB2F9FBDC1"
+    "enhe-product-promo-maker-skill-0.5.4.zip": {
+      "bytes": 633438,
+      "sha256": "75B6CBD4B3438FB1521F5DBFCBC0833562497C86F30E48343C36EC9393C9E06E"
     },
-    "enhe-promotion-manager-extension-0.5.3.zip": {
-      "bytes": 74183,
-      "sha256": "57FC9D39FDC06F0FCD1BFA4071E018FC348CC7FC64C66CD032DE7F0402DFC81F"
+    "enhe-promotion-manager-extension-0.5.4.zip": {
+      "bytes": 73758,
+      "sha256": "5F6B9C63CFC0760170A344A811732C388239177CA44957B396F539AD8188D5F7"
     }
   },
   "verification": {
     "status": "ready",
     "commands": [
-      "python scripts/build_release.py --validated-extension-zip dist/validated/enhe-promotion-manager-0.5.3.zip",
+      "python scripts/build_release.py --validated-extension-zip dist/validated/enhe-promotion-manager-0.5.4.zip",
       "python scripts/verify_distribution.py",
       "python -m unittest discover -s tests -v"
     ]

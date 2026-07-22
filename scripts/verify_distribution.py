@@ -6,10 +6,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+import yaml
 
 sys.dont_write_bytecode = True
 
@@ -40,6 +43,10 @@ REQUIRED_FILES = (
     "NOTICE.md",
     "SECURITY.md",
     "CHANGELOG.md",
+    ".gitattributes",
+    ".gitignore",
+    "requirements-test.txt",
+    ".github/workflows/tests.yml",
     "release-manifest.json",
     "skill/viral-product-copy-video-generator/SKILL.md",
     "skill/viral-product-copy-video-generator/requirements-youtube.txt",
@@ -75,8 +82,6 @@ _ENGLISH_NEGATION = re.compile(
 )
 _CHINESE_NEGATION = re.compile(r"(?:不|不会|不能|未|不支持|不允许|不提供)\s*$")
 _TEXT_SUFFIXES = {".html", ".js", ".json", ".md", ".txt"}
-_EOL_TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".jsonl", ".md", ".py", ".txt"}
-_EOL_TEXT_FILENAMES = {".gitattributes", ".gitignore", "LICENSE", "SHA256SUMS"}
 _GENERATED_COMPONENT_PARTS = {"dist", "__pycache__", ".pytest_cache", "tmp-release-download"}
 VERSION = contract.VERSION
 EXPECTED_CHECKSUM_PATHS = (
@@ -91,6 +96,36 @@ EXPECTED_VALIDATOR_COMMANDS = (
     "python scripts/verify_distribution.py",
     "python -m unittest discover -s tests -v",
 )
+EXPECTED_GITIGNORE_RULES = (".env", ".env.*", "!.env.example")
+EXPECTED_GITATTRIBUTES_RULES = ("* text=auto eol=lf", "release-manifest.json -text")
+EXPECTED_CI_STEPS = [
+    {"name": "Check out repository", "uses": "actions/checkout@v4"},
+    {
+        "name": "Set up Python",
+        "uses": "actions/setup-python@v5",
+        "with": {
+            "python-version": "3.12",
+            "cache": "pip",
+            "cache-dependency-path": "requirements-test.txt",
+        },
+    },
+    {
+        "name": "Install test dependencies",
+        "run": "python -m pip install -r requirements-test.txt",
+    },
+    {
+        "name": "Build deterministic release archives",
+        "run": "python scripts/build_release.py --build-extension-from-component",
+    },
+    {
+        "name": "Verify distribution contract",
+        "run": "python scripts/verify_distribution.py",
+    },
+    {
+        "name": "Run distribution tests",
+        "run": "python -m unittest discover -s tests -v",
+    },
+]
 
 
 def redact_error(message: str) -> str:
@@ -138,6 +173,127 @@ def verify_required_files(root: Path) -> list[str]:
     ]
 
 
+def _effective_gitignore_rules(text: str) -> list[str]:
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _gitignore_rules_follow_safety_policy(rules: list[str]) -> bool:
+    try:
+        required_positions = tuple(rules.index(rule) for rule in EXPECTED_GITIGNORE_RULES)
+    except ValueError:
+        return False
+    return required_positions == tuple(sorted(required_positions)) and all(
+        not rule.startswith("!") or rule == "!.env.example" for rule in rules
+    )
+
+
+def _gitignore_has_expected_behavior(root: Path) -> bool | None:
+    paths = (
+        ".env",
+        ".env.local",
+        ".env.production",
+        "nested/.env",
+        "nested/.env.local",
+        "nested/.env.production",
+        ".env.example",
+        "nested/.env.example",
+    )
+    expected_ignored = set(paths[:6])
+    try:
+        with tempfile.TemporaryDirectory() as temp:
+            repository = Path(temp)
+            (repository / ".gitignore").write_bytes((root / ".gitignore").read_bytes())
+            initialized = subprocess.run(
+                ["git", "init", "-q"],
+                cwd=repository,
+                capture_output=True,
+                check=False,
+            )
+            if initialized.returncode != 0:
+                return None
+            checked = subprocess.run(
+                ["git", "check-ignore", "--no-index", "--", *paths],
+                cwd=repository,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if checked.returncode not in {0, 1}:
+                return None
+            ignored = {line.strip().replace("\\", "/") for line in checked.stdout.splitlines()}
+            return ignored == expected_ignored
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def verify_ci_contract(root: Path) -> list[str]:
+    errors: list[str] = []
+    gitignore = _effective_gitignore_rules((root / ".gitignore").read_text(encoding="utf-8"))
+    for rule in EXPECTED_GITIGNORE_RULES:
+        if rule not in gitignore:
+            errors.append(f".gitignore is missing required rule: {rule}")
+    gitignore_behavior = _gitignore_has_expected_behavior(root)
+    if gitignore_behavior is None:
+        return ["gitignore semantic validation unavailable"]
+    if not _gitignore_rules_follow_safety_policy(gitignore) or not gitignore_behavior:
+        errors.append(".gitignore environment-file behavior is incorrect")
+    for path in root.rglob(".env*"):
+        if path.is_file() and path.name != ".env.example":
+            errors.append(f"environment file is not allowed in public distribution: {path.relative_to(root).as_posix()}")
+    gitattributes = _effective_gitignore_rules(
+        (root / ".gitattributes").read_text(encoding="utf-8")
+    )
+    if tuple(gitattributes) != EXPECTED_GITATTRIBUTES_RULES:
+        errors.append(".gitattributes release normalization is incorrect")
+    try:
+        workflow = yaml.safe_load(
+            (root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        )
+    except yaml.YAMLError as exc:
+        return errors + [f"GitHub Actions workflow is invalid YAML: {exc}"]
+    if not isinstance(workflow, dict):
+        return errors + ["GitHub Actions workflow must be a mapping"]
+    if workflow.get("permissions") != {"contents": "read"}:
+        errors.append("GitHub Actions permissions are incorrect")
+    triggers = workflow.get("on")
+    if (
+        not isinstance(triggers, dict)
+        or set(triggers) != {"push", "pull_request"}
+        or any(value is not None and not isinstance(value, dict) for value in triggers.values())
+    ):
+        errors.append("GitHub Actions workflow triggers are incorrect")
+        return errors
+    jobs = workflow.get("jobs")
+    job = jobs.get("test") if isinstance(jobs, dict) else None
+    if not isinstance(job, dict):
+        return errors + ["GitHub Actions test job is missing"]
+    if job.get("runs-on") != "${{ matrix.os }}":
+        errors.append("GitHub Actions test runner is incorrect")
+    strategy = job.get("strategy")
+    if not isinstance(strategy, dict):
+        errors.append("GitHub Actions strategy must be a mapping")
+    else:
+        if strategy.get("fail-fast") is not False:
+            errors.append("GitHub Actions fail-fast policy is incorrect")
+        matrix = strategy.get("matrix")
+        if not isinstance(matrix, dict):
+            errors.append("GitHub Actions matrix must be a mapping")
+        elif matrix.get("os") != ["windows-latest", "ubuntu-latest"]:
+            errors.append("GitHub Actions OS matrix is incorrect")
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        errors.append("GitHub Actions steps must be a list")
+    elif steps != EXPECTED_CI_STEPS:
+        errors.append("GitHub Actions test steps are incorrect")
+    return errors
+
+
 def verify_identity_and_links(root: Path, release: dict) -> list[str]:
     errors: list[str] = []
     zh = (root / "README.md").read_text(encoding="utf-8")
@@ -165,36 +321,43 @@ def verify_identity_and_links(root: Path, release: dict) -> list[str]:
     if release.get("publicRepository") != "https://github.com/hqwzhu/enhe-promotion-manager":
         errors.append("release publicRepository is incorrect")
     store = release.get("chromeWebStore", {})
-    if store.get("itemId") != contract.STORE_ITEM_ID:
-        errors.append("Chrome Web Store item ID is incorrect")
-    if store.get("publishedVersion") != contract.PUBLISHED_STORE_VERSION:
-        errors.append("Chrome Web Store published version is incorrect")
-    if (
-        store.get("submittedVersion") != contract.SUBMITTED_STORE_VERSION
-        or store.get("status") != contract.STORE_REVIEW_STATUS
-        or store.get("submittedAt") != contract.STORE_SUBMITTED_AT
-        or store.get("autoPublishAfterApproval") is not contract.STORE_AUTO_PUBLISH_AFTER_APPROVAL
-    ):
-        errors.append("Chrome Web Store submission state is incorrect")
+    if not isinstance(store, dict):
+        errors.append("Chrome Web Store record must be a mapping")
+    else:
+        if store.get("itemId") != contract.STORE_ITEM_ID:
+            errors.append("Chrome Web Store item ID is incorrect")
+        if store.get("publishedVersion") != contract.PUBLISHED_STORE_VERSION:
+            errors.append("Chrome Web Store published version is incorrect")
+        if (
+            store.get("submittedVersion") is not None
+            or store.get("status") != "published"
+            or store.get("listingUrl") != contract.STORE_LISTING_URL
+        ):
+            errors.append("Chrome Web Store submission state is incorrect")
     if release.get("skillArchive") != EXPECTED_SKILL_ARCHIVE:
         errors.append("release Skill archive name is incorrect")
     if release.get("extensionArchive") != EXPECTED_EXTENSION_ARCHIVE:
         errors.append("release extension archive name is incorrect")
     sync_audit = release.get("syncAudit", {})
-    if sync_audit.get("status") != "ready":
-        errors.append("release synchronization audit is not ready")
-    if sync_audit.get("scope") != "non-payment extension commands to shipped Skill scripts":
-        errors.append("release synchronization scope is incorrect")
-    if sync_audit.get("excluded") != [
-        "payment",
-        "subscription",
-        "license purchase",
-        "credits",
-        "billing backend",
-    ]:
-        errors.append("release synchronization exclusions are incorrect")
+    if not isinstance(sync_audit, dict):
+        errors.append("release synchronization audit must be a mapping")
+    else:
+        if sync_audit.get("status") != "ready":
+            errors.append("release synchronization audit is not ready")
+        if sync_audit.get("scope") != "non-payment extension commands to shipped Skill scripts":
+            errors.append("release synchronization scope is incorrect")
+        if sync_audit.get("excluded") != [
+            "payment",
+            "subscription",
+            "license purchase",
+            "credits",
+            "billing backend",
+        ]:
+            errors.append("release synchronization exclusions are incorrect")
     verification = release.get("verification", {})
-    if verification.get("commands") != list(EXPECTED_VALIDATOR_COMMANDS):
+    if not isinstance(verification, dict):
+        errors.append("release verification must be a mapping")
+    elif verification.get("commands") != list(EXPECTED_VALIDATOR_COMMANDS):
         errors.append("release validator commands are incorrect")
     return errors
 
@@ -228,10 +391,23 @@ def verify_versions(root: Path, release: dict) -> list[str]:
         errors.append("Skill component capability IDs differ from the contract")
     if extension_component.get("runtime") != "Chrome Manifest V3":
         errors.append("extension component runtime is incorrect")
+    if extension_component.get("name") != contract.PRODUCT_EN:
+        errors.append("extension component product name is incorrect")
     if extension_component.get("entryPoints") != ["manifest.json", "popup.html", "popup.js"]:
         errors.append("extension component entry points are incorrect")
     if extension_component.get("nonPaymentCapabilityIds") != list(contract.NON_PAYMENT_COMMANDS):
         errors.append("extension component capability IDs differ from the contract")
+    if extension.get("name") != "__MSG_extensionName__":
+        errors.append("extension manifest localized name is incorrect")
+    if extension.get("default_locale") != "en":
+        errors.append("extension manifest default locale is incorrect")
+    for locale, expected_name in (("en", contract.PRODUCT_EN), ("zh_CN", contract.PRODUCT_ZH)):
+        messages = read_json(root / "extension/chrome/_locales" / locale / "messages.json")
+        extension_name = messages.get("extensionName")
+        if not isinstance(extension_name, dict):
+            errors.append(f"{locale} extensionName must be a mapping")
+        elif extension_name.get("message") != expected_name:
+            errors.append(f"{locale} extension product name is incorrect")
     return errors
 
 
@@ -257,7 +433,9 @@ def verify_non_payment_sync(root: Path, release: dict) -> list[str]:
     if commands != contract.NON_PAYMENT_COMMANDS:
         errors.append(f"extension command drift: {commands}")
     sync_audit = release.get("syncAudit", {})
-    if sync_audit.get("commands") != list(contract.NON_PAYMENT_COMMANDS):
+    if not isinstance(sync_audit, dict):
+        errors.append("release synchronization audit must be a mapping")
+    elif sync_audit.get("commands") != list(contract.NON_PAYMENT_COMMANDS):
         errors.append("release manifest command list differs from the contract")
     component = read_json(root / "extension/chrome/component-manifest.json")
     if component.get("billingParityIncluded") is not False:
@@ -324,19 +502,6 @@ def _safe_zip_members(archive: zipfile.ZipFile) -> list[str]:
     return names
 
 
-def _normalized_text_bytes(name: str, data: bytes) -> bytes:
-    path = Path(name)
-    if path.suffix.lower() not in _EOL_TEXT_SUFFIXES and path.name not in _EOL_TEXT_FILENAMES:
-        return data
-    if b"\0" in data:
-        return data
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data
-    return data.replace(b"\r\n", b"\n")
-
-
 def verify_archives(root: Path, release: dict) -> list[str]:
     errors: list[str] = []
     if release.get("skillArchive") != EXPECTED_SKILL_ARCHIVE:
@@ -362,13 +527,15 @@ def verify_archives(root: Path, release: dict) -> list[str]:
     try:
         with zipfile.ZipFile(skill_zip) as archive:
             names = _safe_zip_members(archive)
+            errors.extend(
+                f"Skill ZIP metadata is not deterministic: {name}"
+                for name in contract.nondeterministic_zip_members(archive)
+            )
             if len(names) != len(set(names)) or set(names) != set(expected_skill):
                 errors.append("Skill ZIP member list differs from Skill source")
             else:
                 for name, source in expected_skill.items():
-                    if _normalized_text_bytes(name, archive.read(name)) != _normalized_text_bytes(
-                        name, source.read_bytes()
-                    ):
+                    if archive.read(name) != source.read_bytes():
                         errors.append(f"Skill ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid Skill ZIP: {exc}")
@@ -381,6 +548,10 @@ def verify_archives(root: Path, release: dict) -> list[str]:
     try:
         with zipfile.ZipFile(extension_zip) as archive:
             names = _safe_zip_members(archive)
+            errors.extend(
+                f"extension ZIP metadata is not deterministic: {name}"
+                for name in contract.nondeterministic_zip_members(archive)
+            )
             if "manifest.json" not in names:
                 errors.append("extension ZIP is missing root manifest.json")
             if "component-manifest.json" in names:
@@ -389,18 +560,21 @@ def verify_archives(root: Path, release: dict) -> list[str]:
                 errors.append("extension ZIP member list differs from extension/chrome source")
             else:
                 for name, source in expected_extension.items():
-                    if _normalized_text_bytes(name, archive.read(name)) != _normalized_text_bytes(
-                        name, source.read_bytes()
-                    ):
+                    if archive.read(name) != source.read_bytes():
                         errors.append(f"extension ZIP bytes differ from source: {name}")
     except (OSError, zipfile.BadZipFile, ValueError) as exc:
         errors.append(f"invalid extension ZIP: {exc}")
 
     artifacts = release.get("artifacts", {})
+    if not isinstance(artifacts, dict):
+        return errors + ["release artifacts must be a mapping"]
     if set(artifacts) != {skill_zip.name, extension_zip.name}:
         errors.append("release artifact records differ from the official archive set")
     for path in (skill_zip, extension_zip):
         record = artifacts.get(path.name, {})
+        if not isinstance(record, dict):
+            errors.append(f"artifact record must be a mapping: {path.name}")
+            continue
         actual_bytes = path.stat().st_size
         actual_hash = contract.sha256_file(path).upper()
         if record.get("bytes") != actual_bytes:
@@ -433,33 +607,25 @@ def canonical_tree_digest(root: Path, release: dict) -> str:
     ):
         relative = path.relative_to(root)
         relative_name = relative.as_posix()
-        if relative.parts and relative.parts[0].lower() in {".git", "dist", "tmp-release-download"}:
-            continue
-        if (
-            any(part.lower() in {"__pycache__", ".pytest_cache"} for part in relative.parts)
-            or path.suffix.lower() == ".pyc"
-        ):
+        if relative.parts and relative.parts[0] in {".git", "dist"}:
             continue
         if relative_name == "SHA256SUMS":
             continue
         data = path.read_bytes()
         if relative_name == "release-manifest.json":
             normalized = dict(release)
+            verification = release.get("verification")
+            commands = verification.get("commands") if isinstance(verification, dict) else None
             normalized["treeDigest"] = "normalized"
             normalized["artifacts"] = {}
             normalized["verification"] = {
                 "status": "normalized",
-                "commands": release["verification"]["commands"],
+                "commands": commands,
             }
             data = (json.dumps(normalized, ensure_ascii=False, sort_keys=True) + "\n").encode(
                 "utf-8"
             )
-        name = relative_name.encode("utf-8")
-        digest.update(len(name).to_bytes(8, "big"))
-        digest.update(name)
-        data = _normalized_text_bytes(relative_name, data)
-        digest.update(len(data).to_bytes(8, "big"))
-        digest.update(data)
+        digest.update(relative_name.encode("utf-8") + b"\0" + data)
     return digest.hexdigest()
 
 
@@ -530,13 +696,19 @@ def validate(root: Path, check_checksums: bool = True) -> list[str]:
         release = read_json(root / "release-manifest.json")
         if release.get("version") != contract.VERSION:
             errors.append("release version differs from distribution contract")
-        verification_status = release.get("verification", {}).get("status")
+        verification = release.get("verification")
+        if not isinstance(verification, dict):
+            errors.append("release verification must be a mapping")
+            verification_status = None
+        else:
+            verification_status = verification.get("status")
         if check_checksums:
             if verification_status != "ready":
                 errors.append("release verification status must be ready")
         elif verification_status not in {"built", "ready"}:
             errors.append("release verification status is not built or ready")
         errors.extend(verify_identity_and_links(root, release))
+        errors.extend(verify_ci_contract(root))
         errors.extend(verify_versions(root, release))
         errors.extend(verify_extension_boundary(root))
         errors.extend(verify_non_payment_sync(root, release))
@@ -550,14 +722,16 @@ def validate(root: Path, check_checksums: bool = True) -> list[str]:
         errors.extend(verify_forbidden(root))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"validation failure: {exc}")
+    except Exception:
+        return ["validation failure: unexpected validator error"]
     return _redact_errors(errors)
 
 
 def main() -> None:
     try:
         errors = validate(ROOT)
-    except Exception as exc:  # pragma: no cover - final CLI guard
-        errors = [redact_error(f"validation failure: {exc}")]
+    except Exception:  # pragma: no cover - final CLI guard
+        errors = ["validation failure: unexpected validator error"]
     if errors:
         for error in errors:
             print(f"ERROR: {error}")

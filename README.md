@@ -6,7 +6,7 @@
 
 面向独立开发者、产品团队、内容运营和服务商：从一个产品 URL 开始，在本机完成事实整理、证据研究、多平台内容准备和真实数据复盘，同时由你保留最终发布控制权。
 
-**立即开始：** [下载 Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip) · [下载 Chrome 插件 ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) · [从 Chrome 商店安装](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
+**立即开始：** [下载已发布的 v0.5.3 Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip) · [下载已发布的 v0.5.3 Chrome 插件 ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) · [从 Chrome 商店安装](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
 
 ![ENHE 产品推广素材生成器完整工作台](assets/workspace-preview.zh-CN.png)
 
@@ -73,8 +73,8 @@ ENHE 把这些步骤串成一条本地工作流。它不是替你做不可审查
 
 ## 五分钟开始使用
 
-1. 下载 [Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)，或克隆公开仓库。
-2. 解压 Skill；插件可从 [Chrome 商店](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl) 安装，也可下载 [插件 ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) 后按指南加载未打包扩展。
+1. 下载已发布的 [v0.5.3 Skill ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)，或克隆 v0.5.4 源码/发行候选。
+2. 解压 Skill；插件可从 [Chrome 商店](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl) 安装已发布的 v0.5.3，也可下载 [v0.5.3 插件 ZIP](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip) 后按指南加载未打包扩展。
 3. 打开产品页，在插件中点击“使用当前标签页”，选择平台和工作流深度。
 4. 生成、检查并复制本地命令；也可以不使用插件，直接在 Skill 目录运行入口脚本。
 5. 先查看批次报告，再按实际 `outputDir` 审核事实、文案、视频、图片和发布包。
@@ -127,10 +127,11 @@ python scripts\skill_entry.py `
 
 ## 当前版本与下载
 
-- 公开仓库、Skill 和扩展源码：`0.5.3`
-- Chrome 商店当前公开版本（本次更新前）：`0.5.2`
-- [下载 Skill v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)
-- [下载 Chrome 插件 v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip)
+- 公开仓库、Skill 和扩展源码/发行候选：`0.5.4`
+- Chrome 商店当前公开版本：`0.5.3`（已发布）
+- v0.5.4 尚未提交 Chrome 商店审核。
+- [下载已发布的 Skill v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-product-promo-maker-skill-0.5.3.zip)
+- [下载已发布的 Chrome 插件 v0.5.3](https://github.com/hqwzhu/enhe-promotion-manager/releases/download/v0.5.3/enhe-promotion-manager-extension-0.5.3.zip)
 - [查看全部 GitHub Releases](https://github.com/hqwzhu/enhe-promotion-manager/releases)
 - [Chrome 商店现有条目](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)
 

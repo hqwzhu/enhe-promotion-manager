@@ -1,7 +1,7 @@
 {
   "name": "ENHE Product Promo Maker",
-  "version": "0.5.3",
-  "sourceCommit": "897547e1b8efd9ce0fd2655b2ff16da5d0235097",
+  "version": "0.5.4",
+  "sourceCommit": "c589b1a0d4a163d39f47df85c4d72b385d9bec60",
   "runtime": "Chrome Manifest V3",
   "entryPoints": [
     "manifest.json",

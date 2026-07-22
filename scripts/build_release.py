@@ -20,7 +20,7 @@ import verify_distribution
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXED_ZIP_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
+FIXED_ZIP_TIMESTAMP = contract.FIXED_ZIP_TIMESTAMP
 
 
 def _json_bytes(payload: dict) -> bytes:
@@ -28,10 +28,12 @@ def _json_bytes(payload: dict) -> bytes:
 
 
 def add_bytes(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
-    info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_TIMESTAMP)
-    info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = 0o644 << 16
-    archive.writestr(info, data)
+    archive.writestr(
+        contract.deterministic_zip_info(name),
+        data,
+        compress_type=contract.FIXED_ZIP_COMPRESSION,
+        compresslevel=contract.FIXED_ZIP_COMPRESSLEVEL,
+    )
 
 
 def _validate_root_ancestors(root: Path) -> None:
@@ -200,7 +202,13 @@ def build_skill_zip(output: Path) -> None:
         contract._strict_files(ROOT, source),
         key=lambda path: path.relative_to(source).as_posix(),
     )
-    with zipfile.ZipFile(output, "w") as archive:
+    with zipfile.ZipFile(
+        output,
+        "w",
+        compression=contract.FIXED_ZIP_COMPRESSION,
+        compresslevel=contract.FIXED_ZIP_COMPRESSLEVEL,
+    ) as archive:
+        archive.comment = b""
         for path in files:
             relative = path.relative_to(source).as_posix()
             add_bytes(
@@ -220,9 +228,8 @@ def validate_skill_zip(path: Path) -> None:
         names = verify_distribution._safe_zip_members(archive)
         if len(names) != len(set(names)) or set(names) != set(expected):
             raise RuntimeError("staged Skill ZIP member list differs from public source")
-        for info in archive.infolist():
-            if info.date_time != FIXED_ZIP_TIMESTAMP:
-                raise RuntimeError("staged Skill ZIP timestamp is not deterministic")
+        if contract.nondeterministic_zip_members(archive):
+            raise RuntimeError("staged Skill ZIP metadata is not deterministic")
         for name, source_path in expected.items():
             if archive.read(name) != source_path.read_bytes():
                 raise RuntimeError("staged Skill ZIP bytes differ from public source")
@@ -237,7 +244,7 @@ def _extension_source_files() -> dict[str, Path]:
     }
 
 
-def copy_validated_extension(source_zip: Path, output: Path) -> None:
+def validate_extension_zip(source_zip: Path) -> None:
     expected = _extension_source_files()
     with zipfile.ZipFile(source_zip) as archive:
         try:
@@ -251,9 +258,30 @@ def copy_validated_extension(source_zip: Path, output: Path) -> None:
             or "component-manifest.json" in names
         ):
             raise RuntimeError("validated extension ZIP member list differs from public source")
+        if contract.nondeterministic_zip_members(archive):
+            raise RuntimeError("validated extension ZIP metadata is not deterministic")
         for name, path in expected.items():
             if archive.read(name) != path.read_bytes():
                 raise RuntimeError(f"validated extension ZIP differs from public source: {name}")
+
+
+def build_extension_zip_from_component(output: Path) -> None:
+    expected = _extension_source_files()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(
+        output,
+        "w",
+        compression=contract.FIXED_ZIP_COMPRESSION,
+        compresslevel=contract.FIXED_ZIP_COMPRESSLEVEL,
+    ) as archive:
+        archive.comment = b""
+        for name, path in sorted(expected.items()):
+            add_bytes(archive, name, path.read_bytes())
+    validate_extension_zip(output)
+
+
+def copy_validated_extension(source_zip: Path, output: Path) -> None:
+    validate_extension_zip(source_zip)
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source_zip, output)
 
@@ -262,8 +290,16 @@ def canonical_tree_digest(release: dict) -> str:
     return verify_distribution.canonical_tree_digest(ROOT, release)
 
 
-def build_release(validated_extension_zip: Path) -> Path:
-    if not validated_extension_zip.is_file():
+def build_release(
+    validated_extension_zip: Path | None = None,
+    *,
+    build_extension_from_component: bool = False,
+) -> Path:
+    if (validated_extension_zip is None) == (not build_extension_from_component):
+        raise ValueError(
+            "select exactly one extension input: validated ZIP or public component bootstrap"
+        )
+    if validated_extension_zip is not None and not validated_extension_zip.is_file():
         raise FileNotFoundError(
             f"validated extension ZIP is missing: {validated_extension_zip}"
         )
@@ -296,9 +332,13 @@ def build_release(validated_extension_zip: Path) -> Path:
         build_skill_zip(skill_temp)
         validate_skill_zip(skill_temp)
         _fsync_file(skill_temp)
-        copy_validated_extension(validated_extension_zip, extension_temp)
-        if extension_temp.read_bytes() != validated_extension_zip.read_bytes():
-            raise RuntimeError("staged extension ZIP bytes differ from validated input")
+        if build_extension_from_component:
+            build_extension_zip_from_component(extension_temp)
+        else:
+            assert validated_extension_zip is not None
+            copy_validated_extension(validated_extension_zip, extension_temp)
+            if extension_temp.read_bytes() != validated_extension_zip.read_bytes():
+                raise RuntimeError("staged extension ZIP bytes differ from validated input")
         _fsync_file(extension_temp)
 
         _validate_release_path(ROOT, skill_zip, destination=True)
@@ -378,9 +418,19 @@ def build_release(validated_extension_zip: Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--validated-extension-zip", required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--validated-extension-zip")
+    inputs.add_argument("--build-extension-from-component", action="store_true")
     args = parser.parse_args()
-    dist = build_release(Path(args.validated_extension_zip).resolve())
+    validated = (
+        Path(args.validated_extension_zip).resolve()
+        if args.validated_extension_zip is not None
+        else None
+    )
+    dist = build_release(
+        validated,
+        build_extension_from_component=args.build_extension_from_component,
+    )
     print(f"Release assets ready: {dist}")
 
 
