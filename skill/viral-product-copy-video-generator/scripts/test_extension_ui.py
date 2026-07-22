@@ -373,6 +373,43 @@ process.stdout.write(JSON.stringify({{ workspace, guide, returned, popup }}));
             self.assertEqual(page_errors, [])
             context.close()
 
+    def test_language_selection_is_stored_and_restored_after_reload(self):
+        page_url = f"{(EXTENSION / 'popup.html').resolve().as_uri()}?view=workspace"
+        with _chromium_browser(self) as browser:
+            context = browser.new_context(locale="en-US", viewport={"width": 1280, "height": 900})
+            context.add_init_script(
+                """window.chrome = window.chrome || {};
+                window.chrome.i18n = { getUILanguage: () => 'en-US' };
+                window.chrome.storage = { local: {
+                  get: async (keys) => {
+                    const values = JSON.parse(localStorage.getItem('__chromeStorage') || '{}');
+                    return Object.fromEntries(keys.filter((key) => Object.hasOwn(values, key)).map((key) => [key, values[key]]));
+                  },
+                  set: async (updates) => {
+                    const values = JSON.parse(localStorage.getItem('__chromeStorage') || '{}');
+                    localStorage.setItem('__chromeStorage', JSON.stringify({ ...values, ...updates }));
+                  }
+                }};"""
+            )
+            page = context.new_page()
+            page.goto(page_url, wait_until="load")
+            page.locator('body[data-initialized="true"]').wait_for(timeout=3000)
+            self.assertEqual(page.get_attribute("html", "lang"), "en")
+
+            page.click("#languageZh")
+            page.wait_for_function("document.documentElement.lang === 'zh-CN'")
+            self.assertEqual(
+                page.evaluate("JSON.parse(localStorage.getItem('__chromeStorage')).uiLanguage"),
+                "zh-CN",
+            )
+
+            page.reload(wait_until="load")
+            page.locator('body[data-initialized="true"]').wait_for(timeout=3000)
+            self.assertEqual(page.get_attribute("html", "lang"), "zh-CN")
+            self.assertEqual(page.get_attribute("#languageZh", "aria-pressed"), "true")
+            self.assertEqual(page.get_attribute("#languageEn", "aria-pressed"), "false")
+            context.close()
+
     def test_workspace_open_restores_non_sensitive_draft_in_new_page(self):
         page_url = (EXTENSION / "popup.html").resolve().as_uri()
         secret = "must-not-enter-workspace-draft"

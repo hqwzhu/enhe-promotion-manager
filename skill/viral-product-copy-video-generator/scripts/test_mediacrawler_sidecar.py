@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 
@@ -127,7 +127,7 @@ class SidecarCommandTests(unittest.TestCase):
             mode="search",
             query="AI 工具",
             max_contents=20,
-            max_comments=30,
+            max_comments=5,
             include_sub_comments=False,
             timeout_seconds=900,
         )
@@ -141,7 +141,9 @@ class SidecarCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--save_data_option") + 1], "jsonl")
         self.assertEqual(command[command.index("--max_concurrency_num") + 1], "1")
         self.assertEqual(command[command.index("--crawler_max_notes_count") + 1], "20")
-        self.assertEqual(command[command.index("--max_comments_count_singlenotes") + 1], "30")
+        self.assertIn("--requested-max-comments", command)
+        self.assertEqual(command[command.index("--requested-max-comments") + 1], "5")
+        self.assertEqual(command[command.index("--max_comments_count_singlenotes") + 1], "5")
         self.assertEqual(command[command.index("--enable_ip_proxy") + 1], "false")
         self.assertEqual(command[command.index("--headless") + 1], "false")
         self.assertEqual(command[command.index("--get_sub_comment") + 1], "false")
@@ -222,6 +224,114 @@ class SidecarCommandTests(unittest.TestCase):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_zhihu_phase_hooks_record_http_detail_and_comment_transitions_once(self) -> None:
+        class FakeManager:
+            async def launch_and_connect(self) -> str:
+                return "context"
+
+        class FakeClient:
+            async def get_note_by_keyword(self) -> str:
+                return "search"
+
+            async def get_root_comments(self) -> str:
+                return "roots"
+
+            async def get_child_comments(self) -> str:
+                return "children"
+
+        class FakeCrawler:
+            async def get_note_detail(self) -> str:
+                return "detail"
+
+        with tempfile.TemporaryDirectory() as temp:
+            telemetry_path = Path(temp) / "phase-telemetry.json"
+            telemetry = bootstrap.PhaseTelemetry(telemetry_path)
+            bootstrap.patch_zhihu_phase_telemetry(FakeClient, FakeCrawler, FakeManager, telemetry)
+            asyncio.run(FakeManager().launch_and_connect())
+            client = FakeClient()
+            asyncio.run(client.get_note_by_keyword())
+            asyncio.run(FakeCrawler().get_note_detail())
+            asyncio.run(client.get_root_comments())
+            asyncio.run(client.get_root_comments())
+            asyncio.run(client.get_child_comments())
+            asyncio.run(client.get_child_comments())
+            phases = json.loads(telemetry_path.read_text(encoding="utf-8"))["phases"]
+
+        self.assertEqual(
+            [item["phase"] for item in phases],
+            ["cdp_initialization", "upstream_http_api", "detail_content", "root_comments", "sub_comments"],
+        )
+        for item in phases:
+            self.assertEqual(set(item), {"phase", "startedAt", "durationSeconds", "status", "reason"})
+
+    def test_bootstrap_main_only_installs_zhihu_telemetry_hooks(self) -> None:
+        class FakeManager:
+            async def cleanup(self, force: bool = False) -> None:
+                return None
+
+        async def upstream_main() -> None:
+            return None
+
+        async def upstream_cleanup() -> None:
+            return None
+
+        cmd_arg = ModuleType("cmd_arg")
+        cmd_arg.parse_cmd = lambda *args, **kwargs: None
+        config = ModuleType("config")
+        config.CDP_CONNECT_EXISTING = False
+        modules = {
+            "cmd_arg": cmd_arg,
+            "config": config,
+            "media_platform.douyin.client": SimpleNamespace(DouYinClient=type("DouYinClient", (), {})),
+            "media_platform.xhs.client": SimpleNamespace(XiaoHongShuClient=type("XiaoHongShuClient", (), {})),
+            "media_platform.zhihu.client": SimpleNamespace(ZhiHuClient=type("ZhiHuClient", (), {})),
+            "media_platform.zhihu.core": SimpleNamespace(ZhihuCrawler=type("ZhihuCrawler", (), {})),
+            "tools.cdp_browser": SimpleNamespace(CDPBrowserManager=FakeManager),
+            "main": SimpleNamespace(main=upstream_main, async_cleanup=upstream_cleanup),
+        }
+        no_op_patchers = [
+            "patch_safe_cdp_cleanup",
+            "patch_douyin_creator_limit",
+            "patch_zhihu_creator_limit",
+            "patch_zhihu_search_limit",
+            "patch_xiaohongshu_search_limit",
+            "patch_douyin_search_limit",
+            "patch_xiaohongshu_comment_limit",
+            "patch_douyin_comment_limit",
+            "patch_zhihu_comment_limit",
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            checkout = Path(temp)
+            (checkout / "main.py").write_text("", encoding="utf-8")
+            with (
+                mock.patch.dict(sys.modules, modules),
+                mock.patch.multiple(bootstrap, **{name: mock.DEFAULT for name in no_op_patchers}),
+                mock.patch.object(bootstrap, "patch_zhihu_phase_telemetry") as install_hooks,
+            ):
+                for platform in ("xhs", "dy", "zhihu"):
+                    bootstrap.main(["--checkout", str(checkout), "--", "--platform", platform])
+
+        self.assertEqual(install_hooks.call_count, 1)
+
+    def test_bootstrap_parser_accepts_an_internal_telemetry_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            checkout = Path(temp)
+            (checkout / "main.py").write_text("", encoding="utf-8")
+            telemetry_path = checkout / "phase-telemetry.json"
+            _, _, overrides = bootstrap.parse_bootstrap_args(
+                [
+                    "--checkout",
+                    str(checkout),
+                    "--telemetry-path",
+                    str(telemetry_path),
+                    "--",
+                    "--platform",
+                    "zhihu",
+                ]
+            )
+
+        self.assertEqual(overrides.telemetry_path, telemetry_path.resolve())
+
     def test_bootstrap_parser_defaults_requested_max_contents_when_omitted(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mediacrawler-bootstrap-test-") as temp_dir:
             checkout = Path(temp_dir)
@@ -237,6 +347,24 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(parsed_checkout, checkout.resolve())
         self.assertEqual(upstream_args, ["--platform", "dy"])
         self.assertEqual(overrides.requested_max_contents, 20)
+        self.assertEqual(getattr(overrides, "requested_max_comments", None), 30)
+
+    def test_bootstrap_parser_enforces_requested_comment_boundary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mediacrawler-bootstrap-test-") as temp_dir:
+            checkout = Path(temp_dir)
+            (checkout / "main.py").touch()
+
+            try:
+                _, _, overrides = bootstrap.parse_bootstrap_args(
+                    ["--checkout", str(checkout), "--requested-max-comments", "0", "--", "--platform", "dy"]
+                )
+            except SystemExit as exc:
+                self.fail(f"requested comment boundary must accept zero: {exc}")
+            self.assertEqual(getattr(overrides, "requested_max_comments", None), 0)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                bootstrap.parse_bootstrap_args(
+                    ["--checkout", str(checkout), "--requested-max-comments", "31", "--", "--platform", "dy"]
+                )
 
     def test_cdp_port_can_follow_current_authenticated_chrome(self) -> None:
         config = SimpleNamespace(CDP_DEBUG_PORT=9222)
@@ -264,6 +392,421 @@ class BootstrapTests(unittest.TestCase):
         rows = asyncio.run(FakeClient().get_note_by_keyword(keyword="AI 内容生产"))
         self.assertEqual([item["content_id"] for item in rows], ["answer-0", "answer-1", "answer-2"])
 
+    def test_xiaohongshu_search_limits_response_before_detail_collection(self) -> None:
+        patcher = getattr(bootstrap, "patch_xiaohongshu_search_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def get_note_by_keyword(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "has_more": True,
+                    "items": [{"id": f"note-{index}"} for index in range(20)],
+                }
+
+        patcher(FakeClient, 3)
+        response = asyncio.run(FakeClient().get_note_by_keyword(keyword="AI"))
+
+        self.assertEqual([item["id"] for item in response["items"]], ["note-0", "note-1", "note-2"])
+
+    def test_douyin_search_limits_response_before_persistence_callback(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_search_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def search_info_by_keyword(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "data": [{"aweme_info": {"aweme_id": f"video-{index}"}} for index in range(10)],
+                    "extra": {"logid": "safe-log-id"},
+                }
+
+        patcher(FakeClient, 3)
+        response = asyncio.run(FakeClient().search_info_by_keyword(keyword="AI"))
+
+        self.assertEqual(
+            [item["aweme_info"]["aweme_id"] for item in response["data"]],
+            ["video-0", "video-1", "video-2"],
+        )
+
+    def test_xiaohongshu_sub_comments_are_bounded_to_one_page(self) -> None:
+        patcher = getattr(bootstrap, "patch_xiaohongshu_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def get_note_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "has_more": True,
+                    "cursor": "next-page",
+                    "comments": [{"id": f"comment-{index}"} for index in range(10)],
+                }
+
+        patcher(FakeClient, 5)
+        response = asyncio.run(FakeClient().get_note_sub_comments("note", "root", "token"))
+
+        self.assertEqual([item["id"] for item in response["comments"]], [f"comment-{index}" for index in range(5)])
+        self.assertFalse(response["has_more"])
+
+    def test_xiaohongshu_inline_and_later_sub_comments_share_one_root_limit(self) -> None:
+        patcher = getattr(bootstrap, "patch_xiaohongshu_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.sub_page_calls = 0
+
+            async def get_note_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "has_more": False,
+                    "comments": [
+                        {
+                            "id": "root-comment",
+                            "note_id": "note",
+                            "sub_comments": [{"id": f"inline-{index}"} for index in range(2)],
+                            "sub_comment_has_more": True,
+                            "sub_comment_cursor": "next",
+                        }
+                    ],
+                }
+
+            async def get_note_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                self.sub_page_calls += 1
+                return {
+                    "has_more": True,
+                    "comments": [{"id": f"later-{index}"} for index in range(5)],
+                }
+
+            async def collect_sub_comments(self, callback: object) -> None:
+                response = await self.get_note_comments("note", "token")
+                comment = response["comments"][0]
+                await callback("note", comment["sub_comments"])
+                has_more = comment["sub_comment_has_more"]
+                while has_more:
+                    page = await self.get_note_sub_comments("note", comment["id"], "token")
+                    has_more = page["has_more"]
+                    await callback("note", page["comments"])
+
+        callback_ids: list[str] = []
+
+        async def callback(note_id: str, rows: list[dict[str, str]]) -> None:
+            callback_ids.extend(row["id"] for row in rows)
+
+        patcher(FakeClient, 5)
+        client = FakeClient()
+        asyncio.run(client.collect_sub_comments(callback))
+
+        self.assertEqual(callback_ids, ["inline-0", "inline-1", "later-0", "later-1", "later-2"])
+        self.assertEqual(client.sub_page_calls, 1)
+
+    def test_xiaohongshu_inline_sub_comments_close_at_or_above_root_limit(self) -> None:
+        patcher = getattr(bootstrap, "patch_xiaohongshu_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        def run_case(limit: int) -> tuple[list[str], int]:
+            class FakeClient:
+                def __init__(self) -> None:
+                    self.sub_page_calls = 0
+
+                async def get_note_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                    return {
+                        "comments": [
+                            {
+                                "id": "root-comment",
+                                "note_id": "note",
+                                "sub_comments": [{"id": f"inline-{index}"} for index in range(7)],
+                                "sub_comment_has_more": True,
+                            }
+                        ]
+                    }
+
+                async def get_note_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                    self.sub_page_calls += 1
+                    return {"has_more": True, "comments": [{"id": "later"}]}
+
+            patcher(FakeClient, limit)
+            client = FakeClient()
+            response = asyncio.run(client.get_note_comments("note", "token"))
+            comment = response["comments"][0]
+            if comment["sub_comment_has_more"]:
+                asyncio.run(client.get_note_sub_comments("note", comment["id"], "token"))
+            return [row["id"] for row in comment["sub_comments"]], client.sub_page_calls
+
+        for limit, expected_ids in ((5, [f"inline-{index}" for index in range(5)]), (0, [])):
+            with self.subTest(limit=limit):
+                inline_ids, page_calls = run_case(limit)
+                self.assertEqual(inline_ids, expected_ids)
+                self.assertEqual(page_calls, 0)
+
+    def test_douyin_sub_comments_are_bounded_to_one_page(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def get_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "has_more": 1,
+                    "cursor": 20,
+                    "comments": [{"cid": f"comment-{index}"} for index in range(20)],
+                }
+
+        patcher(FakeClient, 5)
+        response = asyncio.run(FakeClient().get_sub_comments("video", "root"))
+
+        self.assertEqual([item["cid"] for item in response["comments"]], [f"comment-{index}" for index in range(5)])
+        self.assertEqual(response["has_more"], 0)
+
+    def test_douyin_empty_sub_comment_page_ends_pagination(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def get_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {"has_more": 1, "cursor": 20, "comments": []}
+
+        patcher(FakeClient, 5)
+        response = asyncio.run(FakeClient().get_sub_comments("video", "root"))
+
+        self.assertEqual(response["comments"], [])
+        self.assertEqual(response["has_more"], 0)
+
+    def test_douyin_empty_root_comment_page_ends_upstream_loop(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.root_page_calls = 0
+
+            async def get_aweme_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                self.root_page_calls += 1
+                return {"has_more": 1, "cursor": self.root_page_calls, "comments": []}
+
+            async def get_sub_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {"has_more": 0, "comments": []}
+
+            async def get_aweme_all_comments(self, max_count: int = 5) -> list[dict[str, object]]:
+                result = []
+                has_more = 1
+                cursor = 0
+                while has_more and len(result) < max_count and self.root_page_calls < 3:
+                    response = await self.get_aweme_comments("video", cursor)
+                    has_more = response["has_more"]
+                    cursor = response["cursor"]
+                    comments = response["comments"]
+                    if not comments:
+                        continue
+                    result.extend(comments)
+                return result
+
+        patcher(FakeClient, 5)
+        client = FakeClient()
+        comments = asyncio.run(client.get_aweme_all_comments())
+
+        self.assertEqual(comments, [])
+        self.assertEqual(client.root_page_calls, 1)
+
+    def test_zhihu_root_and_child_comments_are_bounded_to_one_page(self) -> None:
+        patcher = getattr(bootstrap, "patch_zhihu_comment_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            async def get_root_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "paging": {"is_end": False, "next": "root-next"},
+                    "data": [{"id": f"root-{index}"} for index in range(10)],
+                }
+
+            async def get_child_comments(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "paging": {"is_end": False, "next": "child-next"},
+                    "data": [{"id": f"child-{index}"} for index in range(10)],
+                }
+
+        patcher(FakeClient, 5)
+        client = FakeClient()
+        for response, prefix in (
+            (asyncio.run(client.get_root_comments("content", "answer")), "root"),
+            (asyncio.run(client.get_child_comments("root")), "child"),
+        ):
+            with self.subTest(prefix=prefix):
+                self.assertEqual([item["id"] for item in response["data"]], [f"{prefix}-{index}" for index in range(5)])
+                self.assertTrue(response["paging"]["is_end"])
+
+    def test_douyin_creator_limit_stops_pagination_before_callbacks(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_creator_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.page_calls = 0
+
+            async def get_user_aweme_posts(self, sec_user_id: str, max_cursor: str) -> dict[str, object]:
+                start = self.page_calls * 2
+                self.page_calls += 1
+                return {
+                    "has_more": 1,
+                    "max_cursor": str(self.page_calls),
+                    "aweme_list": [{"aweme_id": f"video-{index}"} for index in range(start, start + 2)],
+                }
+
+            async def get_all_user_aweme_posts(self, sec_user_id: str, callback: object = None) -> list[dict[str, str]]:
+                raise AssertionError("the unbounded upstream implementation must be replaced")
+
+        callback_batches: list[list[str]] = []
+
+        async def callback(rows: list[dict[str, str]]) -> None:
+            callback_batches.append([row["aweme_id"] for row in rows])
+
+        patcher(FakeClient, 3)
+        client = FakeClient()
+        rows = asyncio.run(client.get_all_user_aweme_posts("creator", callback=callback))
+
+        self.assertEqual([row["aweme_id"] for row in rows], ["video-0", "video-1", "video-2"])
+        self.assertEqual(callback_batches, [["video-0", "video-1"], ["video-2"]])
+        self.assertEqual(client.page_calls, 2)
+
+    def test_zhihu_creator_limit_stops_after_the_requested_first_page(self) -> None:
+        patcher = getattr(bootstrap, "patch_zhihu_creator_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeExtractor:
+            def extract_content_list_from_creator(self, rows: list[dict[str, str]]) -> list[dict[str, str]]:
+                return rows
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.page_calls = 0
+                self._extractor = FakeExtractor()
+
+            async def get_creator_answers(self, url_token: str, offset: int, limit: int) -> dict[str, object]:
+                self.page_calls += 1
+                return {
+                    "paging": {"is_end": False},
+                    "data": [{"content_id": f"answer-{index}"} for index in range(20)],
+                }
+
+            async def get_all_anwser_by_creator(
+                self,
+                url_token: str,
+                crawl_interval: float = 1.0,
+                callback: object = None,
+            ) -> list[dict[str, str]]:
+                rows: list[dict[str, str]] = []
+                offset = 0
+                is_end = False
+                while not is_end:
+                    response = await self.get_creator_answers(url_token, offset, 20)
+                    is_end = bool(response["paging"]["is_end"])
+                    page_rows = self._extractor.extract_content_list_from_creator(response["data"])
+                    if callback:
+                        await callback(page_rows)
+                    rows.extend(page_rows)
+                    offset += 20
+                return rows
+
+        callback_batches: list[list[str]] = []
+
+        async def callback(rows: list[dict[str, str]]) -> None:
+            callback_batches.append([row["content_id"] for row in rows])
+
+        patcher(FakeClient, 3)
+        client = FakeClient()
+        rows = asyncio.run(client.get_all_anwser_by_creator("creator", callback=callback))
+
+        self.assertEqual([row["content_id"] for row in rows], ["answer-0", "answer-1", "answer-2"])
+        self.assertEqual(callback_batches, [["answer-0", "answer-1", "answer-2"]])
+        self.assertEqual(client.page_calls, 1)
+
+    def test_douyin_creator_limit_keeps_product_limit_above_formal_smoke_cap(self) -> None:
+        patcher = getattr(bootstrap, "patch_douyin_creator_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.page_calls = 0
+
+            async def get_user_aweme_posts(self, sec_user_id: str, max_cursor: str) -> dict[str, object]:
+                start = self.page_calls * 4
+                self.page_calls += 1
+                return {
+                    "has_more": 1,
+                    "max_cursor": str(self.page_calls),
+                    "aweme_list": [{"aweme_id": f"video-{index}"} for index in range(start, start + 4)],
+                }
+
+            async def get_all_user_aweme_posts(self, sec_user_id: str, callback: object = None) -> list[dict[str, str]]:
+                raise AssertionError("the unbounded upstream implementation must be replaced")
+
+        callback_batches: list[list[str]] = []
+
+        async def callback(rows: list[dict[str, str]]) -> None:
+            callback_batches.append([row["aweme_id"] for row in rows])
+
+        patcher(FakeClient, 7)
+        client = FakeClient()
+        rows = asyncio.run(client.get_all_user_aweme_posts("creator", callback=callback))
+
+        self.assertEqual([row["aweme_id"] for row in rows], [f"video-{index}" for index in range(7)])
+        self.assertEqual(callback_batches, [["video-0", "video-1", "video-2", "video-3"], ["video-4", "video-5", "video-6"]])
+        self.assertEqual(client.page_calls, 2)
+
+    def test_zhihu_creator_limit_preserves_defaults_and_keyword_limit(self) -> None:
+        patcher = getattr(bootstrap, "patch_zhihu_creator_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int, int]] = []
+
+            async def get_creator_content_list_async(
+                self,
+                creator_url: str,
+                offset: int = 0,
+                limit: int = 20,
+            ) -> dict[str, object]:
+                self.calls.append((creator_url, offset, limit))
+                return {
+                    "paging": {"is_end": False},
+                    "data": [{"content_id": f"answer-{index}"} for index in range(20)],
+                }
+
+        patcher(FakeClient, 7)
+        client = FakeClient()
+        default_response = asyncio.run(client.get_creator_content_list_async("creator"))
+        keyword_response = asyncio.run(client.get_creator_content_list_async("creator", offset=5, limit=4))
+
+        self.assertEqual(client.calls, [("creator", 0, 7), ("creator", 5, 4)])
+        self.assertEqual(len(default_response["data"]), 7)
+        self.assertEqual(len(keyword_response["data"]), 4)
+        self.assertTrue(default_response["paging"]["is_end"])
+        self.assertTrue(keyword_response["paging"]["is_end"])
+
+    def test_zhihu_creator_answers_preserves_url_token_keyword(self) -> None:
+        patcher = getattr(bootstrap, "patch_zhihu_creator_limit", None)
+        self.assertIsNotNone(patcher)
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int, int]] = []
+
+            async def get_creator_answers(
+                self,
+                url_token: str,
+                offset: int = 0,
+                limit: int = 20,
+            ) -> dict[str, object]:
+                self.calls.append((url_token, offset, limit))
+                return {
+                    "paging": {"is_end": False},
+                    "data": [{"content_id": f"answer-{index}"} for index in range(20)],
+                }
+
+        patcher(FakeClient, 7)
+        client = FakeClient()
+        response = asyncio.run(client.get_creator_answers(url_token="creator", limit=2))
+
+        self.assertEqual(client.calls, [("creator", 0, 2)])
+        self.assertEqual(len(response["data"]), 2)
+        self.assertTrue(response["paging"]["is_end"])
+
     def test_xiaohongshu_detail_context_switches_to_filtered_search(self) -> None:
         config = SimpleNamespace(CRAWLER_TYPE="detail", KEYWORDS="")
         parsed = SimpleNamespace(platform="xhs", type="detail")
@@ -290,6 +833,30 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(parsed.type, "search")
         self.assertEqual([item["id"] for item in response["items"]], ["target-note"])
         self.assertTrue(response["has_more"])
+
+    def test_xiaohongshu_detail_filter_sees_full_page_before_search_limit(self) -> None:
+        detail_patcher = getattr(bootstrap, "patch_xiaohongshu_detail_search", None)
+        limit_patcher = getattr(bootstrap, "patch_xiaohongshu_search_limit", None)
+        self.assertIsNotNone(detail_patcher)
+        self.assertIsNotNone(limit_patcher)
+
+        class FakeClient:
+            async def get_note_by_keyword(self, *args: object, **kwargs: object) -> dict[str, object]:
+                return {
+                    "has_more": True,
+                    "items": [
+                        {"id": "other-0"},
+                        {"id": "other-1"},
+                        {"id": "other-2"},
+                        {"id": "target-note"},
+                    ],
+                }
+
+        detail_patcher(FakeClient, "target-note")
+        limit_patcher(FakeClient, 3)
+        response = asyncio.run(FakeClient().get_note_by_keyword(keyword="AI"))
+
+        self.assertEqual([item["id"] for item in response["items"]], ["target-note"])
 
     def test_existing_cdp_cleanup_drops_references_without_closing_context(self) -> None:
         calls: list[str] = []
@@ -327,6 +894,7 @@ class SidecarRuntimeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.install = sidecar.SidecarInstall(self.root / "install")
         self.request = sidecar.CollectRequest(platform="xiaohongshu", mode="search", query="AI 工具")
+        self.zhihu_request = sidecar.CollectRequest(platform="zhihu", mode="search", query="AI")
         self.run_dir = self.root / "run"
 
     def tearDown(self) -> None:
@@ -334,11 +902,187 @@ class SidecarRuntimeTests(unittest.TestCase):
 
     def test_runner_times_out_releases_lock_and_removes_raw_by_default(self) -> None:
         def timeout_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+            telemetry_path = Path(command[command.index("--telemetry-path") + 1])
+            telemetry_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "phases": [
+                            {
+                                "phase": "cdp_initialization",
+                                "startedAt": "2026-07-22T00:00:00Z",
+                                "durationSeconds": None,
+                                "status": "started",
+                                "reason": "",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             raise subprocess.TimeoutExpired(command, timeout)
 
-        result = sidecar.run_sidecar(self.install, self.request, self.run_dir, executor=timeout_executor)
+        result = sidecar.run_sidecar(self.install, self.zhihu_request, self.run_dir, executor=timeout_executor)
         self.assertEqual(result.status, "error")
         self.assertEqual(result.reason, "timeout")
+        self.assertEqual(result.telemetry["lastPhase"], "cdp_initialization")
+        self.assertEqual(result.telemetry["phases"][-1]["status"], "timeout")
+        self.assertEqual(result.telemetry["phases"][-1]["reason"], "timeout")
+        self.assertEqual(
+            set(result.telemetry["phases"][-1]),
+            {"phase", "startedAt", "durationSeconds", "status", "reason"},
+        )
+        self.assertFalse((self.run_dir / "phase-telemetry.json").exists())
+        self.assertFalse(sidecar.lock_path(self.install).exists())
+        self.assertFalse((self.run_dir / "raw").exists())
+
+    def test_runner_reports_cleanup_error_and_cleans_raw_and_lock_when_telemetry_delete_fails(self) -> None:
+        original_unlink = Path.unlink
+        telemetry_path = self.run_dir / "phase-telemetry.json"
+        sensitive_error = f"cannot delete {telemetry_path} https://private.example.test/private-user-id?token=secret"
+        unlink_attempts = 0
+
+        def selective_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            nonlocal unlink_attempts
+            if path == telemetry_path:
+                unlink_attempts += 1
+                raise PermissionError(sensitive_error)
+            original_unlink(path, *args, **kwargs)
+
+        def timeout_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        with mock.patch.object(Path, "unlink", new=selective_unlink):
+            result = sidecar.run_sidecar(self.install, self.zhihu_request, self.run_dir, executor=timeout_executor)
+
+        try:
+            self.assertEqual(unlink_attempts, 3)
+            self.assertEqual(result.status, "cleanup_error")
+            self.assertEqual(result.reason, "cleanup_error")
+            self.assertEqual(result.warning, "cleanup_incomplete")
+            self.assertEqual(result.telemetry["phases"][-1]["status"], "cleanup_error")
+            self.assertEqual(result.telemetry["phases"][-1]["reason"], "cleanup_error")
+            self.assertNotIn(sensitive_error, json.dumps(vars(result), default=str))
+            self.assertTrue(telemetry_path.exists())
+            self.assertFalse((self.run_dir / "raw").exists())
+            self.assertFalse(sidecar.lock_path(self.install).exists())
+        finally:
+            telemetry_path.unlink(missing_ok=True)
+
+    def test_acquire_lock_removes_created_file_and_closes_descriptor_when_write_fails(self) -> None:
+        opened_descriptors: list[int] = []
+        real_open = sidecar.os.open
+
+        class BrokenStream:
+            def __init__(self, descriptor: int) -> None:
+                self.descriptor = descriptor
+
+            def __enter__(self) -> BrokenStream:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def write(self, value: str) -> None:
+                raise OSError("lock write denied")
+
+            def close(self) -> None:
+                sidecar.os.close(self.descriptor)
+
+        def tracked_open(path: Path, flags: int) -> int:
+            descriptor = real_open(path, flags)
+            opened_descriptors.append(descriptor)
+            return descriptor
+
+        with (
+            mock.patch.object(sidecar.os, "open", side_effect=tracked_open),
+            mock.patch.object(sidecar.os, "fdopen", side_effect=lambda descriptor, *args, **kwargs: BrokenStream(descriptor)),
+            self.assertRaises(OSError),
+        ):
+            sidecar.acquire_lock(self.install)
+
+        self.assertEqual(len(opened_descriptors), 1)
+        try:
+            self.assertFalse(sidecar.lock_path(self.install).exists())
+            with self.assertRaises(OSError):
+                sidecar.os.fstat(opened_descriptors[0])
+        finally:
+            try:
+                sidecar.os.close(opened_descriptors[0])
+            except OSError:
+                pass
+            sidecar.lock_path(self.install).unlink(missing_ok=True)
+
+    def test_runner_reports_cleanup_error_when_raw_delete_permanently_fails(self) -> None:
+        sensitive_error = f"cannot delete {self.root / 'private-raw-path'}"
+        real_rmtree = sidecar.shutil.rmtree
+
+        def success_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+            raw_dir = Path(command[command.index("--save_data_path") + 1])
+            (raw_dir / "row.jsonl").write_text("{}\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="completed", stderr="")
+
+        def blocked_rmtree(path: Path, *args: object, **kwargs: object) -> None:
+            if Path(path) == self.run_dir / "raw":
+                raise PermissionError(sensitive_error)
+            real_rmtree(path, *args, **kwargs)
+
+        with mock.patch.object(sidecar.shutil, "rmtree", side_effect=blocked_rmtree) as remove_raw:
+            result = sidecar.run_sidecar(
+                self.install,
+                self.zhihu_request,
+                self.run_dir,
+                executor=success_executor,
+                raw_consumer=lambda _: {"status": "ready"},
+            )
+
+        self.assertEqual(remove_raw.call_count, 3)
+        self.assertEqual(result.status, "cleanup_error")
+        self.assertEqual(result.reason, "cleanup_error")
+        self.assertEqual(result.warning, "cleanup_incomplete")
+        self.assertNotIn(sensitive_error, json.dumps(vars(result), default=str))
+        self.assertTrue((self.run_dir / "raw").exists())
+        self.assertFalse(sidecar.lock_path(self.install).exists())
+
+    def test_runner_reports_cleanup_error_when_lock_delete_permanently_fails(self) -> None:
+        sensitive_error = f"cannot delete {self.root / 'private-lock-path'}"
+
+        def success_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+            raw_dir = Path(command[command.index("--save_data_path") + 1])
+            (raw_dir / "row.jsonl").write_text("{}\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="completed", stderr="")
+
+        with mock.patch.object(sidecar, "release_lock", side_effect=PermissionError(sensitive_error)) as remove_lock:
+            result = sidecar.run_sidecar(
+                self.install,
+                self.zhihu_request,
+                self.run_dir,
+                executor=success_executor,
+                raw_consumer=lambda _: {"status": "ready"},
+            )
+
+        self.assertEqual(remove_lock.call_count, 3)
+        self.assertEqual(result.status, "cleanup_error")
+        self.assertEqual(result.reason, "cleanup_error")
+        self.assertEqual(result.warning, "cleanup_incomplete")
+        self.assertNotIn(sensitive_error, json.dumps(vars(result), default=str))
+        self.assertFalse((self.run_dir / "raw").exists())
+        self.assertTrue(sidecar.lock_path(self.install).exists())
+        sidecar.lock_path(self.install).unlink()
+
+    def test_runner_converts_ordinary_execution_error_to_safe_telemetry(self) -> None:
+        sensitive_error = f"cannot open {self.root / 'secret-user-id'} https://private.example.test/path?token=secret"
+
+        def broken_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+            raise OSError(sensitive_error)
+
+        result = sidecar.run_sidecar(self.install, self.zhihu_request, self.run_dir, executor=broken_executor)
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.reason, "error")
+        self.assertEqual(result.telemetry["lastPhase"], "sidecar_process_start")
+        self.assertEqual(result.telemetry["phases"][-1]["status"], "error")
+        self.assertNotIn(sensitive_error, json.dumps(result.telemetry))
         self.assertFalse(sidecar.lock_path(self.install).exists())
         self.assertFalse((self.run_dir / "raw").exists())
 
@@ -346,11 +1090,39 @@ class SidecarRuntimeTests(unittest.TestCase):
         def cancelled_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
             raise KeyboardInterrupt
 
-        result = sidecar.run_sidecar(self.install, self.request, self.run_dir, executor=cancelled_executor)
+        result = sidecar.run_sidecar(self.install, self.zhihu_request, self.run_dir, executor=cancelled_executor)
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(result.reason, "user_cancelled")
+        self.assertEqual(result.telemetry["lastPhase"], "sidecar_process_start")
+        self.assertEqual(result.telemetry["phases"][-1]["status"], "cancelled")
         self.assertFalse(sidecar.lock_path(self.install).exists())
         self.assertFalse((self.run_dir / "raw").exists())
+
+    def test_xiaohongshu_run_does_not_create_phase_telemetry(self) -> None:
+        for platform in ("xiaohongshu", "douyin"):
+            with self.subTest(platform=platform):
+                seen_command: list[str] = []
+
+                def empty_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+                    seen_command.extend(command)
+                    return subprocess.CompletedProcess(command, 0, stdout="completed", stderr="")
+
+                request = sidecar.CollectRequest(platform=platform, mode="search", query="AI")
+                run_dir = self.root / platform
+                result = sidecar.run_sidecar(self.install, request, run_dir, executor=empty_executor)
+
+                self.assertNotIn("--telemetry-path", seen_command)
+                self.assertEqual(result.telemetry, {})
+                self.assertFalse((run_dir / "phase-telemetry.json").exists())
+
+    def test_repeated_phase_records_only_one_transition(self) -> None:
+        telemetry_path = self.run_dir / "phase-telemetry.json"
+        self.run_dir.mkdir()
+
+        sidecar.record_phase_telemetry(telemetry_path, "root_comments")
+        sidecar.record_phase_telemetry(telemetry_path, "root_comments")
+
+        self.assertEqual([item["phase"] for item in sidecar.load_phase_telemetry(telemetry_path)["phases"]], ["root_comments"])
 
     def test_runner_consumes_output_then_cleans_raw(self) -> None:
         consumed: list[Path] = []
@@ -366,9 +1138,11 @@ class SidecarRuntimeTests(unittest.TestCase):
             consumed.extend(raw_dir.rglob("*.jsonl"))
             return {"contentCount": 1, "commentCount": 0}
 
-        result = sidecar.run_sidecar(self.install, self.request, self.run_dir, executor=success_executor, raw_consumer=consumer)
+        result = sidecar.run_sidecar(self.install, self.zhihu_request, self.run_dir, executor=success_executor, raw_consumer=consumer)
         self.assertEqual(result.status, "ready")
         self.assertEqual(result.payload["contentCount"], 1)
+        self.assertEqual(result.telemetry["lastPhase"], "normalization")
+        self.assertEqual(result.telemetry["phases"][-1]["status"], "success")
         self.assertEqual(len(consumed), 1)
         self.assertFalse((self.run_dir / "raw").exists())
 
@@ -581,6 +1355,63 @@ class NormalizationLimitTests(unittest.TestCase):
         self.assertEqual(payload["counts"]["limitedComments"], 2)
         self.assertEqual(len((self.run_dir / "comments.jsonl").read_text(encoding="utf-8").splitlines()), 1)
 
+    def test_comment_limit_keeps_children_of_selected_root_comments(self) -> None:
+        content = self.load_fixture("xiaohongshu-contents.jsonl")[0]
+        template = self.load_fixture("xiaohongshu-comments.jsonl")
+        comments = []
+        for index in range(6):
+            root_id = f"root-{index}"
+            comments.extend(
+                [
+                    {
+                        **template[0],
+                        "comment_id": root_id,
+                        "note_id": content["note_id"],
+                        "parent_comment_id": "",
+                    },
+                    {
+                        **template[1],
+                        "comment_id": f"child-{index}",
+                        "note_id": content["note_id"],
+                        "parent_comment_id": root_id,
+                    },
+                ]
+            )
+
+        payload = platform_data_manager.normalize_rows(
+            "xiaohongshu",
+            [content],
+            comments,
+            self.run_dir,
+            self.salt,
+            content_limit=1,
+            comments_per_content_limit=5,
+        )
+
+        self.assertEqual(
+            [record["commentId"] for record in payload["comments"]],
+            [comment_id for index in range(5) for comment_id in (f"root-{index}", f"child-{index}")],
+        )
+        self.assertEqual(payload["counts"]["normalizedComments"], 10)
+        self.assertEqual(payload["counts"]["limitedComments"], 2)
+
+    def test_zero_comment_limit_removes_roots_and_children(self) -> None:
+        content = self.load_fixture("xiaohongshu-contents.jsonl")[0]
+        comments = self.load_fixture("xiaohongshu-comments.jsonl")
+
+        payload = platform_data_manager.normalize_rows(
+            "xiaohongshu",
+            [content],
+            comments,
+            self.run_dir,
+            self.salt,
+            content_limit=1,
+            comments_per_content_limit=0,
+        )
+
+        self.assertEqual(payload["comments"], [])
+        self.assertEqual(payload["counts"]["limitedComments"], 2)
+
 
 class DownstreamTests(unittest.TestCase):
     salt = b"fixture-only-local-salt"
@@ -698,6 +1529,18 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return platform_data_manager.main(argv)
 
+    def assert_creator_request_is_absent(self, manifest_bytes: bytes, *markers: str) -> None:
+        manifest = json.loads(manifest_bytes)
+        self.assertEqual(manifest["target"], "")
+        self.assertEqual(manifest["query"], "")
+        self.assertTrue(manifest["targetRedacted"])
+        self.assertTrue(manifest["queryRedacted"])
+        self.assertEqual(manifest["targetType"], "creator")
+        self.assertFalse(manifest["redaction"]["creatorTargetPersisted"])
+        self.assertFalse(manifest["redaction"]["creatorQueryPersisted"])
+        for marker in markers:
+            self.assertNotIn(marker.encode("utf-8"), manifest_bytes)
+
     def test_collect_parser_applies_safe_defaults_and_rejects_cookie_arguments(self) -> None:
         args = platform_data_manager.parse_args(
             ["collect", "--platform", "xiaohongshu", "--mode", "search", "--query", "AI 工具"]
@@ -776,6 +1619,8 @@ class CliTests(unittest.TestCase):
         manifest = json.loads((run_dir / "run-manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "ready")
         self.assertEqual(manifest["captureMode"], "fixture")
+        self.assertEqual(manifest["telemetry"]["phases"], [])
+        self.assertEqual(manifest["telemetry"]["lastPhase"], "")
         self.assertEqual(manifest["counts"]["normalizedContents"], 1)
         self.assertEqual(manifest["counts"]["normalizedComments"], 2)
         self.assertTrue((run_dir / "contents.jsonl").exists())
@@ -784,6 +1629,399 @@ class CliTests(unittest.TestCase):
         self.assertFalse((run_dir / "raw").exists())
         self.assertTrue(Path(manifest["artifacts"]["viralContentLibrary"]).exists())
         self.assertTrue(Path(manifest["artifacts"]["commentEvidence"]).exists())
+
+    def test_creator_fixture_manifest_never_persists_target_or_combined_query_at_initial_or_ready_write(self) -> None:
+        out_dir = self.root / "promotion-output"
+        target = "creator-target-id-sentinel-7349"
+        query_url = "https://www.xiaohongshu.com/user/profile/creator-query-url-sentinel-8462?xsec_token=not-for-output"
+        query_id = "creator-query-id-sentinel-8462"
+        query = f"{query_url} {query_id}"
+        manifest_writes: list[bytes] = []
+        original_write_manifest = platform_data_manager.write_manifest
+
+        def capture_manifest_write(run_dir: Path, manifest: dict[str, object]) -> None:
+            original_write_manifest(run_dir, manifest)
+            manifest_writes.append((run_dir / "run-manifest.json").read_bytes())
+
+        with mock.patch.object(platform_data_manager, "write_manifest", side_effect=capture_manifest_write):
+            report = self.run_main(
+                [
+                    "collect",
+                    "--platform",
+                    "xiaohongshu",
+                    "--mode",
+                    "creator",
+                    "--target",
+                    target,
+                    "--query",
+                    query,
+                    "--fixture-dir",
+                    str(FIXTURES),
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(len(manifest_writes), 2)
+        for manifest_bytes in manifest_writes:
+            self.assert_creator_request_is_absent(
+                manifest_bytes,
+                target,
+                query_url,
+                "/user/profile/creator-query-url-sentinel-8462",
+                "creator-query-url-sentinel-8462",
+                query_id,
+            )
+
+    def test_creator_timeout_manifest_never_persists_target_or_individual_query_at_initial_or_final_write(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        target = "https://www.douyin.com/user/creator-target-url-sentinel-7349?sec_uid=not-for-output"
+        query = "creator-query-id-sentinel-8462"
+        manifest_writes: list[bytes] = []
+        original_write_manifest = platform_data_manager.write_manifest
+
+        def capture_manifest_write(run_dir: Path, manifest: dict[str, object]) -> None:
+            original_write_manifest(run_dir, manifest)
+            manifest_writes.append((run_dir / "run-manifest.json").read_bytes())
+
+        with (
+            mock.patch.object(platform_data_manager, "write_manifest", side_effect=capture_manifest_write),
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+            mock.patch.object(
+                platform_data_manager.mediacrawler_sidecar,
+                "run_sidecar",
+                return_value=sidecar.RunResult(status="error", reason="timeout"),
+            ) as run_sidecar,
+        ):
+            report = self.run_main(
+                [
+                    "collect",
+                    "--platform",
+                    "douyin",
+                    "--mode",
+                    "creator",
+                    "--target",
+                    target,
+                    "--query",
+                    query,
+                    "--sidecar-root",
+                    str(sidecar_root),
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["reason"], "timeout")
+        self.assertEqual(run_sidecar.call_args.args[1].target, target)
+        self.assertEqual(run_sidecar.call_args.args[1].query, query)
+        self.assertEqual(len(manifest_writes), 2)
+        for manifest_bytes in manifest_writes:
+            self.assert_creator_request_is_absent(
+                manifest_bytes,
+                target,
+                "/user/creator-target-url-sentinel-7349",
+                "creator-target-url-sentinel-7349",
+                query,
+            )
+        manifest = json.loads(manifest_writes[-1])
+        self.assertEqual(manifest["telemetry"]["phases"], [])
+        self.assertEqual(manifest["telemetry"]["lastPhase"], "")
+        self.assertNotIn(target, json.dumps(manifest["telemetry"]))
+
+    def test_collect_persists_safe_error_telemetry_when_sidecar_execution_raises(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        sensitive_error = f"cannot open {self.root / 'private-user-id'} https://private.example.test/item?token=secret"
+        original_run_sidecar = sidecar.run_sidecar
+
+        def execute_with_os_error(install: sidecar.SidecarInstall, request: sidecar.CollectRequest, run_dir: Path, **kwargs: object) -> sidecar.RunResult:
+            def broken_executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+                raise OSError(sensitive_error)
+
+            return original_run_sidecar(install, request, run_dir, executor=broken_executor, **kwargs)
+
+        with (
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "run_sidecar", side_effect=execute_with_os_error),
+        ):
+            report = self.run_main(
+                [
+                    "collect",
+                    "--platform",
+                    "zhihu",
+                    "--mode",
+                    "search",
+                    "--query",
+                    "safe query",
+                    "--sidecar-root",
+                    str(sidecar_root),
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+        manifest_bytes = (Path(report["runDir"]) / "run-manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        self.assertEqual(manifest["status"], "error")
+        self.assertEqual(manifest["reason"], "error")
+        self.assertEqual(manifest["telemetry"]["lastPhase"], "sidecar_process_start")
+        self.assertEqual(manifest["telemetry"]["phases"][-1]["status"], "error")
+        self.assertNotIn(sensitive_error.encode("utf-8"), manifest_bytes)
+        self.assertNotIn(b"private-user-id", manifest_bytes)
+
+    def test_lock_write_and_cleanup_failure_manifest_reports_fixed_cleanup_error(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        install = sidecar.SidecarInstall(sidecar_root)
+        lock_path = sidecar.lock_path(install)
+        private_path = self.root / "private-lock-user-id"
+        write_error = f"lock-write-sensitive-sentinel {private_path} https://private.example.test/private-item-id?token=secret"
+        cleanup_error = f"lock-cleanup-sensitive-sentinel {private_path}"
+        opened_descriptors: list[int] = []
+        close_calls: list[int] = []
+        lock_unlink_attempts = 0
+        real_open = sidecar.os.open
+        original_unlink = Path.unlink
+
+        class BrokenStream:
+            def __init__(self, descriptor: int) -> None:
+                self.descriptor = descriptor
+
+            def __enter__(self) -> BrokenStream:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def write(self, value: str) -> None:
+                raise OSError(write_error)
+
+            def close(self) -> None:
+                close_calls.append(self.descriptor)
+                sidecar.os.close(self.descriptor)
+
+        def tracked_open(path: Path, flags: int) -> int:
+            descriptor = real_open(path, flags)
+            opened_descriptors.append(descriptor)
+            return descriptor
+
+        def selective_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            nonlocal lock_unlink_attempts
+            if path == lock_path:
+                lock_unlink_attempts += 1
+                raise PermissionError(cleanup_error)
+            original_unlink(path, *args, **kwargs)
+
+        try:
+            with (
+                mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+                mock.patch.object(sidecar, "execute_process", side_effect=AssertionError("executor must not run")),
+                mock.patch.object(sidecar.os, "open", side_effect=tracked_open),
+                mock.patch.object(sidecar.os, "fdopen", side_effect=lambda descriptor, *args, **kwargs: BrokenStream(descriptor)),
+                mock.patch.object(Path, "unlink", new=selective_unlink),
+            ):
+                report = self.run_main(
+                    [
+                        "collect",
+                        "--platform",
+                        "zhihu",
+                        "--mode",
+                        "search",
+                        "--query",
+                        "safe query",
+                        "--sidecar-root",
+                        str(sidecar_root),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                )
+
+            run_dir = Path(report["runDir"])
+            manifest_bytes = (run_dir / "run-manifest.json").read_bytes()
+            manifest = json.loads(manifest_bytes)
+            self.assertEqual(lock_unlink_attempts, 3)
+            self.assertEqual(opened_descriptors, close_calls)
+            with self.assertRaises(OSError):
+                sidecar.os.fstat(opened_descriptors[0])
+            self.assertTrue(lock_path.exists())
+            self.assertFalse((run_dir / "phase-telemetry.json").exists())
+            self.assertFalse((run_dir / "raw").exists())
+            self.assertEqual(report["status"], "cleanup_error")
+            self.assertEqual(report["reason"], "cleanup_error")
+            self.assertEqual(manifest["status"], "cleanup_error")
+            self.assertEqual(manifest["reason"], "cleanup_error")
+            self.assertEqual(manifest["raw"]["warning"], "cleanup_incomplete")
+            self.assertTrue(manifest["raw"]["cleaned"])
+            self.assertEqual(manifest["telemetry"]["phases"][-1]["status"], "cleanup_error")
+            self.assertEqual(manifest["telemetry"]["phases"][-1]["reason"], "cleanup_error")
+            for sensitive_value in (write_error, cleanup_error, str(private_path), "private-item-id"):
+                self.assertNotIn(sensitive_value.encode("utf-8"), manifest_bytes)
+        finally:
+            lock_path.unlink(missing_ok=True)
+
+    def test_cleanup_error_manifest_uses_fixed_warning_without_sensitive_details(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        sensitive_error = str(self.root / "private-cleanup-path")
+
+        def cleanup_failed(install: sidecar.SidecarInstall, request: sidecar.CollectRequest, run_dir: Path, **kwargs: object) -> sidecar.RunResult:
+            (run_dir / "raw").mkdir(exist_ok=True)
+            return sidecar.RunResult(
+                status="cleanup_error",
+                reason="cleanup_error",
+                warning="cleanup_incomplete",
+                telemetry=sidecar.summarize_phase_telemetry([], "cleanup_error", "cleanup_error"),
+            )
+
+        with (
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "run_sidecar", side_effect=cleanup_failed),
+        ):
+            report = self.run_main(
+                [
+                    "collect",
+                    "--platform",
+                    "zhihu",
+                    "--mode",
+                    "search",
+                    "--query",
+                    "safe query",
+                    "--sidecar-root",
+                    str(sidecar_root),
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+        manifest_bytes = (Path(report["runDir"]) / "run-manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        self.assertEqual(manifest["status"], "cleanup_error")
+        self.assertEqual(manifest["reason"], "cleanup_error")
+        self.assertEqual(manifest["raw"]["warning"], "cleanup_incomplete")
+        self.assertFalse(manifest["raw"]["cleaned"])
+        self.assertEqual(manifest["telemetry"]["phases"][-1]["status"], "cleanup_error")
+        self.assertEqual(manifest["telemetry"]["phases"][-1]["reason"], "cleanup_error")
+        self.assertNotIn(sensitive_error.encode("utf-8"), manifest_bytes)
+
+    def test_zhihu_ready_and_timeout_telemetry_cleanup_failures_update_manifests_and_clean_other_resources(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        original_run_sidecar = sidecar.run_sidecar
+        original_unlink = Path.unlink
+        sensitive_error = f"cannot delete {self.root / 'private-telemetry-user-id'} https://private.example.test/item?token=secret"
+
+        def ready_runner(install: sidecar.SidecarInstall, request: sidecar.CollectRequest, run_dir: Path, **kwargs: object) -> sidecar.RunResult:
+            def executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+                raw_dir = Path(command[command.index("--save_data_path") + 1])
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                (raw_dir / "row.jsonl").write_text("{}\n", encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, stdout="completed", stderr="")
+
+            kwargs.pop("raw_consumer", None)
+            return original_run_sidecar(
+                install,
+                request,
+                run_dir,
+                executor=executor,
+                raw_consumer=lambda _: {"status": "ready", "counts": platform_data_manager.empty_counts()},
+                **kwargs,
+            )
+
+        def timeout_runner(install: sidecar.SidecarInstall, request: sidecar.CollectRequest, run_dir: Path, **kwargs: object) -> sidecar.RunResult:
+            def executor(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+                telemetry_path = Path(command[command.index("--telemetry-path") + 1])
+                telemetry_path.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 1,
+                            "phases": [
+                                {
+                                    "phase": "cdp_initialization",
+                                    "startedAt": "2026-07-22T00:00:00Z",
+                                    "durationSeconds": None,
+                                    "status": "started",
+                                    "reason": "",
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                raise subprocess.TimeoutExpired(command, timeout)
+
+            return original_run_sidecar(install, request, run_dir, executor=executor, **kwargs)
+
+        for label, runner, expected_phase in (
+            ("ready", ready_runner, "normalization"),
+            ("timeout", timeout_runner, "cdp_initialization"),
+        ):
+            with self.subTest(label=label):
+                unlink_attempts = 0
+
+                def selective_unlink(path: Path, *args: object, **kwargs: object) -> None:
+                    nonlocal unlink_attempts
+                    if path.name == "phase-telemetry.json":
+                        unlink_attempts += 1
+                        raise PermissionError(sensitive_error)
+                    original_unlink(path, *args, **kwargs)
+
+                with (
+                    mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+                    mock.patch.object(platform_data_manager.mediacrawler_sidecar, "run_sidecar", side_effect=runner),
+                    mock.patch.object(Path, "unlink", new=selective_unlink),
+                ):
+                    report = self.run_main(
+                        [
+                            "collect",
+                            "--platform",
+                            "zhihu",
+                            "--mode",
+                            "search",
+                            "--query",
+                            "query-sentinel",
+                            "--sidecar-root",
+                            str(sidecar_root),
+                            "--out-dir",
+                            str(out_dir),
+                        ]
+                    )
+                    run_dir = Path(report["runDir"])
+                    manifest_bytes = (run_dir / "run-manifest.json").read_bytes()
+                    manifest = json.loads(manifest_bytes)
+
+                telemetry_path = run_dir / "phase-telemetry.json"
+                try:
+                    self.assertEqual(unlink_attempts, 3)
+                    self.assertEqual(report["status"], "cleanup_error")
+                    self.assertEqual(report["reason"], "cleanup_error")
+                    self.assertEqual(manifest["status"], "cleanup_error")
+                    self.assertEqual(manifest["reason"], "cleanup_error")
+                    self.assertEqual(manifest["raw"]["warning"], "cleanup_incomplete")
+                    self.assertTrue(manifest["raw"]["cleaned"])
+                    self.assertEqual(manifest["telemetry"]["lastPhase"], expected_phase)
+                    self.assertEqual(manifest["telemetry"]["phases"][-1]["status"], "cleanup_error")
+                    self.assertEqual(manifest["telemetry"]["phases"][-1]["reason"], "cleanup_error")
+                    self.assertNotIn("query-sentinel", json.dumps(manifest["telemetry"]))
+                    self.assertNotIn("Cookie", json.dumps(manifest["telemetry"]))
+                    self.assertNotIn(sensitive_error.encode("utf-8"), manifest_bytes)
+                    self.assertTrue(telemetry_path.exists())
+                    self.assertFalse((run_dir / "raw").exists())
+                    self.assertFalse(sidecar.lock_path(sidecar.SidecarInstall(sidecar_root)).exists())
+                finally:
+                    telemetry_path.unlink(missing_ok=True)
 
     def test_fixture_manifest_and_outputs_do_not_contain_sensitive_markers(self) -> None:
         out_dir = self.root / "promotion-output"
@@ -830,6 +2068,56 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "provider_unavailable")
         self.assertIn("existing Firecrawl", " ".join(report["nextActions"]))
+        manifest = json.loads((Path(report["runDir"]) / "run-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["telemetry"]["phases"], [])
+        self.assertEqual(manifest["telemetry"]["lastPhase"], "")
+
+    def test_collect_persists_cancelled_sidecar_telemetry(self) -> None:
+        out_dir = self.root / "promotion-output"
+        sidecar_root = self.root / "sidecar"
+        sidecar_root.mkdir()
+        (sidecar_root / "identity.salt").write_bytes(b"s" * 32)
+        telemetry = {
+            "schemaVersion": 1,
+            "phases": [
+                {
+                    "phase": "cdp_initialization",
+                    "startedAt": "2026-07-22T00:00:00Z",
+                    "durationSeconds": 1.0,
+                    "status": "cancelled",
+                    "reason": "cancelled",
+                }
+            ],
+            "lastPhase": "cdp_initialization",
+        }
+        with (
+            mock.patch.object(platform_data_manager.mediacrawler_sidecar, "check_setup", return_value={"status": "ready"}),
+            mock.patch.object(
+                platform_data_manager.mediacrawler_sidecar,
+                "run_sidecar",
+                return_value=sidecar.RunResult(status="cancelled", reason="user_cancelled", telemetry=telemetry),
+            ),
+        ):
+            report = self.run_main(
+                [
+                    "collect",
+                    "--platform",
+                    "zhihu",
+                    "--mode",
+                    "search",
+                    "--query",
+                    "safe query",
+                    "--sidecar-root",
+                    str(sidecar_root),
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+        manifest = json.loads((Path(report["runDir"]) / "run-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["status"], "cancelled")
+        self.assertEqual(manifest["telemetry"]["lastPhase"], "cdp_initialization")
+        self.assertEqual(manifest["telemetry"]["phases"][-1]["status"], "cancelled")
 
     def test_promotion_manager_delegates_platform_data_before_product_arguments(self) -> None:
         result = subprocess.run(

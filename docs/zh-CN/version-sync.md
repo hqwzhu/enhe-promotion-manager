@@ -2,15 +2,9 @@
 
 ## 当前标记
 
-公开仓库/Skill/扩展源码版本：0.5.3
+公开仓库/Skill/扩展源码/发行候选版本：0.5.4
 
-Chrome 商店当前公开版本：0.5.2
-
-Chrome 商店已提交版本：0.5.3
-
-商店审核状态：待审核；审核通过后自动发布
-
-商店条目 ID：`dloklkbnmoigemnfigbkibogmgbieppl`
+已发布的 Chrome 商店版本：0.5.3
 
 非支付命令引用：11/11 已在随包 Skill 中存在
 
@@ -38,7 +32,7 @@ Hosted Worker：关闭
 
 ## 商店与源码版本关系
 
-Chrome 商店条目 https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl 当前公开版本仍为 `0.5.2`。`0.5.3` 已于 2026-07-20 提交审核，并设置为审核通过后自动发布。商店用户会在 Google 审核通过并完成自动发布后获得更新；本文不会把“待审核”描述为“已发布”。
+已发布的 Chrome 商店条目 https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl 和 GitHub Release 包均使用版本 `0.5.3`。公开仓库/Skill/扩展源码为 `0.5.4` 发行候选，尚未提交 Chrome 商店审核。
 
 ## 同步结论不包含什么
 

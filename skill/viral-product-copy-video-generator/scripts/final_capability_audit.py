@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -516,6 +517,24 @@ def requirement_status(
     )
     docs = github_docs_status()
     extension = browser_extension_status()
+    extension_limits = [
+        "The extension can generate Skill, browser publish session, viral/real evidence inbox, readiness audit, and periodic automation commands, validate a license endpoint, and build a Chrome/Edge submission zip.",
+        "The repository includes a Stripe-backed license service, PostgreSQL JSONB state backend, isolated hosted worker, same-host HTTPS deployment files, legal pages, listing drafts, screenshot plan, and reviewer notes.",
+        "External account setup, live Stripe prices/webhooks, deployed HTTPS server configuration, hosted-worker capacity, and Chrome/Edge store approval remain operator-controlled launch gates.",
+        "Remote code is not allowed in the extension package; hosted services may return data only.",
+    ]
+    if extension["hostedWorkerEnabled"] is True:
+        extension_limits.insert(
+            1,
+            "Hosted usage reservation and hosted-run submission are enabled and remain subject to backend quota and authorization checks.",
+        )
+    elif extension["hostedWorkerEnabled"] is False:
+        extension_limits.insert(
+            1,
+            "Hosted Worker is disabled; hosted usage reservation, hosted payload copying, and hosted-run submission are fail-closed. Local Skill runs remain available.",
+        )
+    else:
+        extension_limits.insert(1, "Hosted Worker state could not be confirmed from the extension source.")
     full_platform_publish_ready = all(
         platforms[p]["directPublish"] == "ready" for p in ["youtube", "github", "zhihu", "xiaohongshu", "douyin"]
     )
@@ -753,12 +772,7 @@ def requirement_status(
             "status": "ready" if extension["ready"] else "partial_ready",
             "evidence": extension["evidence"],
             "missing": extension["missing"],
-            "limits": [
-                "The extension can generate Skill, browser publish session, viral/real evidence inbox, readiness audit, and periodic automation commands, validate a license endpoint, reserve hosted usage credits, start hosted runs, and build a Chrome/Edge submission zip.",
-                "The repository includes a Stripe-backed license service, PostgreSQL JSONB state backend, isolated hosted worker, same-host HTTPS deployment files, legal pages, listing drafts, screenshot plan, and reviewer notes.",
-                "External account setup, live Stripe prices/webhooks, deployed HTTPS server configuration, hosted-worker capacity, and Chrome/Edge store approval remain operator-controlled launch gates.",
-                "Remote code is not allowed in the extension package; hosted services may return data only.",
-            ],
+            "limits": extension_limits,
         },
         {
             "id": "phase_progress_reporting",
@@ -875,6 +889,7 @@ def github_docs_status() -> dict[str, Any]:
 def browser_extension_status() -> dict[str, Any]:
     missing = [path for path in BROWSER_EXTENSION_FILES if not (ROOT / path).exists()]
     evidence = [str(ROOT / path) for path in BROWSER_EXTENSION_FILES if (ROOT / path).exists()]
+    hosted_worker_enabled: bool | None = None
     for path in BACKEND_DEPLOY_FILES:
         full_path = ROOT / path
         if full_path.exists():
@@ -1008,7 +1023,7 @@ def browser_extension_status() -> dict[str, Any]:
             "Reserve credits",
             "Hosted run endpoint",
             "Copy hosted payload",
-            "Start hosted run",
+            "Hosted Worker off",
             "Open checkout",
             "Billing portal",
             "www.enhe-tech.com.cn",
@@ -1020,6 +1035,21 @@ def browser_extension_status() -> dict[str, Any]:
             missing.append("browser-extension/popup.html must not load remote scripts")
     if script_path.exists():
         script_text = safe_read(script_path)
+        if "const HOSTED_WORKER_ENABLED = true;" in script_text:
+            hosted_worker_enabled = True
+        elif "const HOSTED_WORKER_ENABLED = false;" in script_text:
+            hosted_worker_enabled = False
+            missing.append(
+                "browser-extension/popup.js declares HOSTED_WORKER_ENABLED = false; hosted usage reservation and run submission are disabled"
+            )
+            hosted_button = re.search(
+                r'<button(?=[^>]*\bid="startHostedRun")(?=[^>]*\bdisabled\b)(?=[^>]*\baria-disabled="true")[^>]*>',
+                safe_read(popup_path),
+            )
+            if not hosted_button:
+                missing.append("browser-extension/popup.html must disable startHostedRun while Hosted Worker is off")
+        else:
+            missing.append("browser-extension/popup.js must declare HOSTED_WORKER_ENABLED explicitly")
         for marker in [
             "chrome.storage.local",
             "validateLicense",
@@ -1028,6 +1058,8 @@ def browser_extension_status() -> dict[str, Any]:
             "authorizeUsage",
             "buildHostedRunPayload",
             "startHostedRun",
+            "applyHostedWorkerState",
+            "requireHostedWorker",
             "usageAuthorizeEndpoint",
             "hostedRunEndpoint",
             "idempotencyKey",
@@ -1089,6 +1121,7 @@ def browser_extension_status() -> dict[str, Any]:
         "ready": not missing,
         "evidence": evidence,
         "missing": missing,
+        "hostedWorkerEnabled": hosted_worker_enabled,
     }
 
 

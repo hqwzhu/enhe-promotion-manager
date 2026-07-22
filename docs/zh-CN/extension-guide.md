@@ -6,7 +6,7 @@ Chrome 扩展是 Manifest V3 的本地入口，用来把当前产品页面转换
 
 ### Chrome Web Store
 
-打开 [现有商店条目](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)，点击安装。商店当前公开版本（发布前）为 `0.5.2`。
+打开 [已发布的 Chrome 商店条目](https://chromewebstore.google.com/detail/enhe-promotion-manager/dloklkbnmoigemnfigbkibogmgbieppl)，点击安装。商店当前公开版本为 `0.5.3`；源码/发行候选 v0.5.4 尚未提交 Chrome 审核。
 
 ### 未打包扩展
 
@@ -15,7 +15,7 @@ git clone https://github.com/hqwzhu/enhe-promotion-manager.git
 cd enhe-promotion-manager
 ```
 
-在 `chrome://extensions` 打开开发者模式，选择“加载已解压的扩展程序”，指向 `extension\chrome`。源码公开发行版本为 `0.5.3`。
+在 `chrome://extensions` 打开开发者模式，选择“加载已解压的扩展程序”，指向 `extension\chrome`。源码/发行候选版本为 `0.5.4`。
 
 ## 当前标签页捕获
 

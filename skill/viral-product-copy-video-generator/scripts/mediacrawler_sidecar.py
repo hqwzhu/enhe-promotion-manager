@@ -27,7 +27,24 @@ MAX_COMMENTS = 30
 MAX_TIMEOUT_SECONDS = 3600
 DEFAULT_TIMEOUT_SECONDS = 900
 RAW_WARNING = "Raw MediaCrawler output may contain sensitive tokens or identifiers. Keep it only for local debugging and never upload it."
+CLEANUP_WARNING = "cleanup_incomplete"
+CLEANUP_RETRY_ATTEMPTS = 3
 BOOTSTRAP_PATH = Path(__file__).with_name("mediacrawler_bootstrap.py")
+TELEMETRY_SCHEMA_VERSION = 1
+TELEMETRY_PHASES = {
+    "sidecar_process_start",
+    "bootstrap_start",
+    "cdp_initialization",
+    "upstream_http_api",
+    "detail_content",
+    "root_comments",
+    "sub_comments",
+    "normalization",
+}
+
+
+class _CleanupError(Exception):
+    pass
 
 
 @dataclass(frozen=True)
@@ -95,6 +112,7 @@ class RunResult:
     keep_raw: bool = False
     warning: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
+    telemetry: dict[str, Any] = field(default_factory=dict)
 
 
 Executor = Callable[[list[str], Path, int], subprocess.CompletedProcess[str]]
@@ -106,7 +124,12 @@ def default_install() -> SidecarInstall:
     return SidecarInstall(local_data / "ENHE" / "promotion-manager" / "mediacrawler")
 
 
-def build_mediacrawler_command(install: SidecarInstall, request: CollectRequest, raw_dir: Path) -> list[str]:
+def build_mediacrawler_command(
+    install: SidecarInstall,
+    request: CollectRequest,
+    raw_dir: Path,
+    telemetry_path: Path | None = None,
+) -> list[str]:
     command = [
         str(install.python_executable),
         str(BOOTSTRAP_PATH),
@@ -114,7 +137,11 @@ def build_mediacrawler_command(install: SidecarInstall, request: CollectRequest,
         str(install.checkout),
         "--requested-max-contents",
         str(request.max_contents),
+        "--requested-max-comments",
+        str(request.max_comments),
     ]
+    if telemetry_path:
+        command.extend(["--telemetry-path", str(telemetry_path.resolve())])
     if request.platform == "xiaohongshu" and request.mode == "detail" and request.detail_context_query.strip():
         command.extend(
             [
@@ -378,41 +405,69 @@ def run_sidecar(
 ) -> RunResult:
     execute = executor or execute_process
     raw_dir = run_dir / "raw"
+    telemetry_path = run_dir / "phase-telemetry.json" if request.platform == "zhihu" else None
     run_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    if telemetry_path:
+        start_phase_telemetry(telemetry_path, "sidecar_process_start")
     acquired = False
     retry_count = 0
+    final_result: RunResult | None = None
+
+    def completed_result(result: RunResult) -> RunResult:
+        nonlocal final_result
+        if telemetry_path:
+            result.telemetry = finalize_phase_telemetry(telemetry_path, result.status, result.reason)
+        final_result = result
+        return result
+
     try:
-        acquire_lock(install)
+        try:
+            acquire_lock(install)
+        except _CleanupError:
+            return completed_result(RunResult(
+                status="cleanup_error",
+                reason="cleanup_error",
+                keep_raw=keep_raw,
+                warning=CLEANUP_WARNING,
+            ))
+        except RuntimeError:
+            return completed_result(RunResult(status="provider_unavailable", reason="provider_unavailable", keep_raw=keep_raw))
+        except OSError:
+            return completed_result(RunResult(status="error", reason="error", keep_raw=keep_raw))
         acquired = True
-        command = build_mediacrawler_command(install, request, raw_dir)
+        command = build_mediacrawler_command(install, request, raw_dir, telemetry_path)
         try:
             completed = execute(command, install.checkout, request.timeout_seconds)
         except subprocess.TimeoutExpired:
-            return RunResult(status="error", reason="timeout", keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else "")
+            return completed_result(RunResult(status="error", reason="timeout", keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else ""))
         except KeyboardInterrupt:
-            return RunResult(status="cancelled", reason="user_cancelled", keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else "")
+            return completed_result(RunResult(status="cancelled", reason="user_cancelled", keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else ""))
+        except OSError:
+            return completed_result(RunResult(status="error", reason="error", keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else ""))
 
         if completed.returncode != 0 and is_transient_network_error(completed.stderr or completed.stdout):
             retry_count = 1
             try:
                 completed = execute(command, install.checkout, request.timeout_seconds)
             except subprocess.TimeoutExpired:
-                return RunResult(status="error", reason="timeout", retry_count=retry_count, keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else "")
+                return completed_result(RunResult(status="error", reason="timeout", retry_count=retry_count, keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else ""))
             except KeyboardInterrupt:
-                return RunResult(
+                return completed_result(RunResult(
                     status="cancelled",
                     reason="user_cancelled",
                     retry_count=retry_count,
                     keep_raw=keep_raw,
                     warning=RAW_WARNING if keep_raw else "",
-                )
+                ))
+            except OSError:
+                return completed_result(RunResult(status="error", reason="error", retry_count=retry_count, keep_raw=keep_raw, warning=RAW_WARNING if keep_raw else ""))
 
         stdout_tail = safe_tail(completed.stdout)
         stderr_tail = safe_tail(completed.stderr)
         if completed.returncode != 0:
             status = classify_failure(f"{completed.stdout}\n{completed.stderr}")
-            return RunResult(
+            return completed_result(RunResult(
                 status=status,
                 reason=status,
                 exit_code=completed.returncode,
@@ -421,11 +476,11 @@ def run_sidecar(
                 retry_count=retry_count,
                 keep_raw=keep_raw,
                 warning=RAW_WARNING if keep_raw else "",
-            )
+            ))
 
         row_count = jsonl_row_count(raw_dir)
         if not row_count:
-            return RunResult(
+            return completed_result(RunResult(
                 status="no_results",
                 exit_code=completed.returncode,
                 stdout_tail=stdout_tail,
@@ -433,24 +488,26 @@ def run_sidecar(
                 retry_count=retry_count,
                 keep_raw=keep_raw,
                 warning=RAW_WARNING if keep_raw else "",
-            )
+            ))
         payload: dict[str, Any] = {}
         if raw_consumer:
             try:
+                if telemetry_path:
+                    record_phase_telemetry(telemetry_path, "normalization")
                 payload = raw_consumer(raw_dir)
             except Exception as exc:  # noqa: BLE001 - caller receives a sanitized boundary error.
-                return RunResult(
+                return completed_result(RunResult(
                     status="normalization_error",
-                    reason=safe_tail(str(exc)),
+                    reason="normalization_error",
                     exit_code=completed.returncode,
                     stdout_tail=stdout_tail,
                     stderr_tail=stderr_tail,
                     retry_count=retry_count,
                     keep_raw=keep_raw,
                     warning=RAW_WARNING if keep_raw else "",
-                )
+                ))
         status = "partial_ready" if payload.get("status") == "partial_ready" else "ready"
-        return RunResult(
+        return completed_result(RunResult(
             status=status,
             exit_code=completed.returncode,
             stdout_tail=stdout_tail,
@@ -459,12 +516,126 @@ def run_sidecar(
             keep_raw=keep_raw,
             warning=RAW_WARNING if keep_raw else "",
             payload=payload,
-        )
+        ))
     finally:
-        if not keep_raw and raw_dir.exists():
-            shutil.rmtree(raw_dir)
-        if acquired:
-            release_lock(install)
+        cleanup_failed = False
+        if telemetry_path and not retry_cleanup(lambda: telemetry_path.unlink(missing_ok=True)):
+            cleanup_failed = True
+        if not keep_raw and raw_dir.exists() and not retry_cleanup(lambda: shutil.rmtree(raw_dir)):
+            cleanup_failed = True
+        if acquired and not retry_cleanup(lambda: release_lock(install)):
+            cleanup_failed = True
+        if cleanup_failed and final_result:
+            mark_cleanup_error(final_result)
+
+
+def retry_cleanup(action: Callable[[], Any]) -> bool:
+    for _ in range(CLEANUP_RETRY_ATTEMPTS):
+        try:
+            action()
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def mark_cleanup_error(result: RunResult) -> None:
+    result.status = "cleanup_error"
+    result.reason = "cleanup_error"
+    result.warning = f"{result.warning} {CLEANUP_WARNING}".strip()
+    phases = result.telemetry.get("phases") if isinstance(result.telemetry, dict) else None
+    if isinstance(phases, list) and phases:
+        phases[-1]["status"] = "cleanup_error"
+        phases[-1]["reason"] = "cleanup_error"
+
+
+def start_phase_telemetry(path: Path, phase: str) -> None:
+    record_phase_telemetry(path, phase)
+
+
+def record_phase_telemetry(path: Path, phase: str) -> None:
+    if phase not in TELEMETRY_PHASES:
+        return
+    payload = load_phase_telemetry(path)
+    now = utc_now()
+    phases = payload["phases"]
+    if phases and phases[-1]["phase"] == phase and phases[-1]["status"] == "started":
+        return
+    if phases and phases[-1]["status"] == "started":
+        phases[-1].update({"durationSeconds": elapsed_seconds(phases[-1]["startedAt"]), "status": "completed", "reason": "success"})
+    phases.append({"phase": phase, "startedAt": now, "durationSeconds": None, "status": "started", "reason": ""})
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def finalize_phase_telemetry(path: Path, status: str, reason: str) -> dict[str, Any]:
+    payload = load_phase_telemetry(path)
+    return summarize_phase_telemetry(payload["phases"], status, reason)
+
+
+def summarize_phase_telemetry(phases: list[dict[str, Any]], status: str, reason: str) -> dict[str, Any]:
+    if not phases:
+        phases = [{"phase": "sidecar_process_start", "startedAt": utc_now(), "durationSeconds": None, "status": "started", "reason": ""}]
+    final_reason = phase_telemetry_reason(status, reason)
+    phases[-1].update(
+        {
+            "durationSeconds": elapsed_seconds(phases[-1]["startedAt"]),
+            "status": "success" if final_reason == "success" else final_reason,
+            "reason": final_reason,
+        }
+    )
+    return {"schemaVersion": TELEMETRY_SCHEMA_VERSION, "phases": phases, "lastPhase": phases[-1]["phase"]}
+
+
+def load_phase_telemetry(path: Path) -> dict[str, Any]:
+    try:
+        source = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        source = {}
+    phases = []
+    for item in source.get("phases", []) if isinstance(source, dict) else []:
+        if not isinstance(item, dict) or item.get("phase") not in TELEMETRY_PHASES:
+            continue
+        phases.append(
+            {
+                "phase": item["phase"],
+                "startedAt": str(item.get("startedAt") or utc_now()),
+                "durationSeconds": item.get("durationSeconds") if isinstance(item.get("durationSeconds"), (int, float)) else None,
+                "status": "started" if item.get("status") == "started" else "completed",
+                "reason": "",
+            }
+        )
+    return {"schemaVersion": TELEMETRY_SCHEMA_VERSION, "phases": phases}
+
+
+def phase_telemetry_reason(status: str, reason: str) -> str:
+    if reason == "timeout":
+        return "timeout"
+    if status == "cancelled":
+        return "cancelled"
+    if status in {"ready", "partial_ready"}:
+        return "success"
+    if status == "no_results":
+        return "no_results"
+    if status == "normalization_error" or reason == "normalization_error":
+        return "normalization_error"
+    if status == "cleanup_error" or reason == "cleanup_error":
+        return "cleanup_error"
+    if status == "provider_unavailable":
+        return "provider_unavailable"
+    if status in {"waiting_login", "manual_verification_required", "blocked_by_platform"}:
+        return status
+    return "error"
+
+
+def elapsed_seconds(started_at: str) -> float:
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return round(max(0.0, (datetime.now(timezone.utc) - started).total_seconds()), 3)
 
 
 def execute_process(command: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
@@ -499,12 +670,33 @@ def lock_path(install: SidecarInstall) -> Path:
 def acquire_lock(install: SidecarInstall) -> None:
     path = lock_path(install)
     path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor: int | None = None
+    stream: Any = None
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as exc:
         raise RuntimeError("another_mediacrawler_task_is_running") from exc
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        stream.write(json.dumps({"pid": os.getpid(), "createdAt": utc_now()}) + "\n")
+    try:
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = None
+        with stream:
+            stream.write(json.dumps({"pid": os.getpid(), "createdAt": utc_now()}) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if not retry_cleanup(lambda: path.unlink(missing_ok=True)):
+            raise _CleanupError from None
+        raise
 
 
 def release_lock(install: SidecarInstall) -> None:
