@@ -29,6 +29,20 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements-test.txt
 
+      - name: Fetch immutable release archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python -c 'import json; print(json.load(open("release-manifest.json", encoding="utf-8"))["version"])')
+          mkdir -p "dist/v${version}"
+          gh release download "v${version}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "enhe-product-promo-maker-skill-${version}.zip" \
+            --pattern "enhe-promotion-manager-extension-${version}.zip" \
+            --dir "dist/v${version}" \
+            --clobber
+
       - name: Verify distribution contract
         run: python scripts/verify_distribution.py
 
